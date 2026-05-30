@@ -1,2 +1,27 @@
-.output
-.test_file
+# ── Environments ──────────────────────────────────────────────
+venv/
+.venv/
+env/
+.env
+*.env
+.env.*
+
+# ── Generated output & local data ─────────────────────────────
+output/
+test_file/
+
+# ── Tooling / editor ──────────────────────────────────────────
+.claude/
+
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ── OS cruft ──────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+.DS_Store
