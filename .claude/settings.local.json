@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('phase1/filters.py'\\).read\\(\\)\\); ast.parse\\(open\\('phase1/output.py'\\).read\\(\\)\\); print\\('OK - both parse'\\)\")",
+      "Bash(./venv/Scripts/python.exe -X utf8 -c ' *)",
+      "Bash(./venv/Scripts/python.exe -X utf8 -c \"import phase1.file_reader, phase1.filters, phase1.scorer, phase1.output, phase1.main; print\\('All modules import cleanly.'\\)\")",
+      "Bash(./venv/Scripts/python.exe -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in \\('phase1/main.py','phase1/output.py','phase1/scorer.py','phase1/filters.py'\\)]; print\\('syntax OK'\\)\")"
+    ]
+  }
+}
