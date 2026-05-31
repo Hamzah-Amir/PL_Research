@@ -246,9 +246,17 @@ def run_phase1() -> None:
     print()
     print("=" * 65)
     print("  Phase 1 complete.")
-    print("  Next: pick one ASIN from the Excel output and proceed to Phase 2.")
     print("=" * 65)
-    print()
+
+    # ── Hand off to Phase 2 (keyword verification) — automatic ────────────────
+    # The Black Box data is already in memory (df); Phase 2 reuses it so the user
+    # is not asked to re-upload the file. The transition is automatic: Phase 2
+    # opens and asks for the target ASIN picked from the Excel output (press
+    # Enter at that prompt to exit if Phase 2 is not wanted).
+    print("\n  Pick one ASIN from the Excel output to take into Phase 2.")
+    print("  Moving on to Phase 2 (keyword verification)...")
+    from phase2.main import run_phase2
+    run_phase2(blackbox_df=df)
 
 
 if __name__ == "__main__":

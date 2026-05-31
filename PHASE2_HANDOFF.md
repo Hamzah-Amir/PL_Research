@@ -14,9 +14,47 @@ Black Box XLSX export, filters it, scores every survivor, and outputs ranked
 Excel shortlists. The end product of Phase 1 is the user **picking one target
 ASIN** from the output to carry into Phase 2.
 
-**Phase 2 — Keyword Verification — NOT STARTED.** This is the next build.
+**Phase 2 — Keyword Verification — FUNCTIONALLY COMPLETE.** Steps 4–6 are built:
+Claude proposes the launch keywords (Step 5) and the user approves/swaps until
+the set is locked (Step 6). The locked set is printed and **returned** from
+`run_phase2()` for Phase 3 — no Excel export (the keywords feed Phase 3's
+competitor analysis sheet). Remaining: a first live API run + verifying the
+Cerebro column mappings against a real export.
 
 Phases 3–7 exist only in the PDF blueprint; do not start them.
+
+### Phase 2 resolved decisions (so future work matches)
+- **Inputs:** target ASIN (typed) + Phase 1 Black Box XLSX (for the title) +
+  H10 **Cerebro** export. Cerebro only — Keepa/JS are Phase 3.
+- **All keyword judgement is purely Claude via API** — relevancy + every Step-5
+  exclusion. **No deterministic relevancy logic, no heuristic fallback.** Only
+  objective prep (dedupe + SV ≥ 100) is deterministic.
+- **Product context:** ASIN → look up `{title, category, subcategory}` in Black
+  Box → **Claude builds a structured product profile** (`derive_product_profile`):
+  `product_name`, `product_type`, `key_attributes`, `use_cases`, `not_this`,
+  `brand`. That profile (not a lossy short name) anchors the relevancy judgement
+  (`select_keywords`). **Text only — the product image is NOT sent** (decided
+  against sending the image).
+- **API key:** git-ignored `.env` in project root (`ANTHROPIC_API_KEY`), loaded
+  via `python-dotenv`. Model: `claude-opus-4-8`, adaptive thinking, structured
+  outputs (`messages.parse`), prompt caching on the product + candidate prefix.
+- **Modules:** `phase2/cerebro_reader.py`, `keyword_selector.py`,
+  `claude_client.py`, `main.py`.
+- **Phase 1 → Phase 2 connected (automatic):** `run.py`/`run.ps1` always start
+  at Phase 1 (no menu). Phase 1 ends by calling `run_phase2(blackbox_df=df)`
+  directly (no confirm) with the loaded Black Box frame — Phase 2 reuses it and
+  does not re-prompt for the file. Press Enter at the Phase 2 ASIN prompt to
+  exit if Phase 2 isn't wanted. For isolated dev testing, `python -m phase2.main`
+  runs `run_phase2()` (no arg), which prompts for the Black Box path.
+- **Step 6 loop:** `_run_approval_loop` keeps approved keywords, excludes
+  rejected ones, and re-calls `select_keywords(target_count=need, exclude=...)`
+  for replacements until the user locks the set.
+
+### Remaining for Phase 2
+1. Verify `cerebro_reader.COLUMN_MAPPINGS` against a **real** Cerebro export.
+2. First live end-to-end API run (the two Claude calls are unexercised against a real key/files).
+
+(No Excel export — locked keywords are returned from `run_phase2()` and consumed by Phase 3.)
 
 ---
 

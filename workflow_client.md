@@ -129,3 +129,50 @@ Products that pass all filters but still carry a warning get a note. Yellow-high
 **Can I re-run on the same file?** Yes. Each run saves timestamped files (e.g. `Phase1_Batch1_WithVariants_20260529_143012.xlsx`) — nothing is overwritten.
 
 **A product scored red — should I ignore it?** The score is a ranking tool, not a pass/fail gate. Red means it ranked lower than the others in your filtered pool, not that it's bad.
+
+---
+
+# Phase 2 — Keyword Verification
+
+Phase 2 takes the single ASIN you chose in Phase 1 and finds the best keywords to launch with. **Claude itself decides which keywords are relevant to your product** — there is no rule-of-thumb shortcut. You give it the product and the Cerebro keyword export; it reads them and picks.
+
+## Before You Start
+
+| Item | Source |
+|------|--------|
+| Target ASIN | The one product you selected at the end of Phase 1 |
+| Black Box XLSX | The same Phase 1 export (used to look up the product's title) |
+| Cerebro keyword XLSX | Helium 10 → **Cerebro** → run on your target ASIN → export the full keyword list |
+| Anthropic API key | Put it in a file named **`.env`** in the project folder: `ANTHROPIC_API_KEY=sk-ant-...` (this file is never committed to git) |
+
+> Phase 2 uses **Cerebro** only. Keepa and Jungle Scout come later (Phase 3).
+
+## How to Run
+
+Phase 2 always runs as a continuation of Phase 1:
+```
+.\run.ps1
+```
+Run Phase 1 as usual. When it finishes (you choose not to see more products), it **moves into Phase 2 automatically** — no prompt. Your Black Box data stays loaded, so you are **not** asked for that file again; you just type the target ASIN you picked from the Excel. (If you didn't want Phase 2, press **Enter** at the ASIN prompt to exit.)
+
+## What the Tool Does
+
+1. **Asks for your target ASIN.**
+2. **Finds that product's title and category** — reusing the Black Box data already loaded in Phase 1 (or asking for the file if you started Phase 2 on its own).
+3. **Builds a product profile** — Claude reads the title + category and works out the product's name, type, key distinguishing features, what it's used for, what it is *not*, and the brand to exclude. This profile is what keyword relevance is judged against (so a slicker brush isn't matched to deshedding-brush keywords). *(Uses the text only — the product image is not sent.)*
+4. **Asks for your Cerebro export** and tidies the list: removes duplicates and anything with fewer than 100 monthly searches.
+5. **Claude proposes the launch keywords** — judging each one's relevance against the profile and removing the product's own brand, competitor brands, misspellings, wrong-category terms, different-product terms, overly broad terms, and question phrases. Each pick comes with a one-line reason.
+6. **You approve or swap** (Step 6): the proposed list is shown and you can
+   - press **Enter** to accept and lock the set,
+   - type the **numbers** of any keywords you don't want (e.g. `2,5`) — Claude swaps them for the next-best relevant ones (your kept keywords stay), or
+   - type **q** to cancel.
+   Repeat until you're happy; the set is then **locked**.
+7. **Prints the locked keywords** with search volume, relevancy, and reason. These keywords are carried forward into **Phase 3** (the competitor analysis sheet) — there is no separate file to export.
+
+## FAQ
+
+**"ANTHROPIC_API_KEY not found"** — Create a `.env` file in the project folder containing `ANTHROPIC_API_KEY=sk-ant-...`. Phase 2 will not guess keywords without a working key.
+
+**"Could not find ASIN … in the Black Box file"** — The ASIN you typed isn't in that export. Use the exact ASIN from your Phase 1 results, and the same Black Box file.
+
+**Why does it need the Black Box file again?** A Cerebro export has no product title; the Black Box file is where the product's name lives, and Claude needs to know what the product is to judge keyword relevance.
