@@ -13,7 +13,7 @@ Flow:
   3. Claude builds a structured product profile (name, type, key attributes,
      use cases, what-it-is-NOT, brand) from the title + category — the relevancy
      anchor. Text only; the product image is not sent.
-  4. User provides the H10 Cerebro keyword export for the target ASIN.
+  4. User provides the H10 Xray keyword export for the target product.
   5. Deterministic prep: de-duplicate + drop SV < 100, rank by SV.
   6. Claude judges relevancy against the product profile and proposes the
      keywords (PDF Step 5), with a reason per pick.
@@ -40,7 +40,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from phase1.file_reader import read_blackbox_file
-from phase2.cerebro_reader import read_cerebro_file
+from phase2.xray_reader import read_xray_keywords
 from phase2.keyword_selector import prepare_candidates
 from phase2.claude_client import (
     Phase2ApiError,
@@ -274,20 +274,20 @@ def run_phase2(blackbox_df: Optional[pd.DataFrame] = None) -> Optional[list]:
     print(f"  NOT this       : {', '.join(product.not_this) or '(none)'}")
     print(f"  Brand          : {product.brand or '(none)'}")
 
-    # ── 4. Cerebro file → candidate keywords ──────────────────────────────────
-    cerebro_path = _get_file_path(
-        "Paste the full path to your H10 Cerebro keyword export for this ASIN.",
-        "CEREBRO FILE",
+    # ── 4. Xray keyword file → candidate keywords ─────────────────────────────
+    kw_path = _get_file_path(
+        "Paste the full path to your H10 Xray keyword export for this product.",
+        "XRAY KEYWORD FILE",
     )
-    _section("READING CEREBRO")
-    cerebro_df, _ = read_cerebro_file(cerebro_path)
-    if cerebro_df.empty:
-        print("\n  No keywords could be read from the Cerebro file.")
+    _section("READING KEYWORDS")
+    kw_df, _ = read_xray_keywords(kw_path)
+    if kw_df.empty:
+        print("\n  No keywords could be read from the Xray keyword file.")
         return
 
     # ── 5. Deterministic prep (dedupe + SV >= 100) ────────────────────────────
     _section("PREPARING CANDIDATES")
-    candidates, report = prepare_candidates(cerebro_df)
+    candidates, report = prepare_candidates(kw_df)
     print()
     for line in report:
         print(line)

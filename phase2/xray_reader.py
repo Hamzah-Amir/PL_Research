@@ -1,16 +1,18 @@
 """
-Reads and parses Helium 10 Cerebro keyword export files (Phase 2 input).
+Reads and parses Helium 10 Xray **Keyword** export files (Phase 2 input).
 
-Cerebro is run on the single target ASIN chosen at the end of Phase 1 and
-exports the keyword universe for that ASIN. This module normalises the variety
-of column names different H10 versions / locales produce into a single
-canonical set used throughout Phase 2 — the same approach as Phase 1's
-`file_reader.py`.
+In this project's workflow the Phase 2 keyword universe comes from the H10 Xray
+Keywords view (exported for the target product's main keyword), not Cerebro —
+though the export carries the same keyword metrics (Search Volume, Cerebro IQ
+Score, Competing Products, Title Density, Keyword Sales, etc.).
 
-NOTE: the canonical mappings below are built from the standard documented
-Cerebro export headers plus broad alias fallbacks. They have not yet been
-verified against a real export from this account; once a sample Cerebro XLSX is
-available, confirm the header names and tighten `COLUMN_MAPPINGS` accordingly.
+Column names are normalised to a canonical set via `COLUMN_MAPPINGS`, the same
+approach as Phase 1's `file_reader.py`. Mappings below are confirmed against a
+real Xray keyword export (header on the first row):
+
+    Keyword Phrase | Cerebro IQ Score | Search Volume | Search Volume Trend |
+    Suggested PPC Bid | Keyword Sales | Competing Products | Title Density |
+    Competitor Rank (avg)
 """
 
 import re
@@ -20,83 +22,54 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-# Maps our internal (canonical) column names to all known H10 Cerebro header
-# variants. Order within each list is preference order for exact matching.
+# Maps internal (canonical) names to the H10 Xray keyword-export headers, with
+# broad alias fallback for minor version/locale differences.
 COLUMN_MAPPINGS: Dict[str, List[str]] = {
     # The keyword phrase itself.
     "keyword": [
-        "Keyword Phrase", "Keyword", "Keywords", "Phrase",
-        "Search Term", "keyword phrase",
-    ],
-    # Monthly search volume (Amazon). Primary selection signal alongside relevancy.
-    "search_volume": [
-        "Search Volume", "Search Vol", "SV", "Monthly Search Volume",
-        "Est. Search Volume", "search volume",
-    ],
-    # 30/90-day search-volume trend (percentage).
-    "search_volume_trend": [
-        "Search Volume Trend", "Search Vol Trend", "SV Trend",
-        "Search Volume Trend (90 days)", "Search Volume Trend (30 days)",
+        "Keyword Phrase", "Keyword", "Keywords", "Phrase", "Search Term",
     ],
     # Cerebro IQ Score — H10's blended opportunity/relevancy metric.
     "cerebro_iq": [
-        "Cerebro IQ Score", "Cerebro IQ", "IQ Score", "CerebroIQ",
+        "Cerebro IQ Score", "Cerebro IQ", "IQ Score",
     ],
-    # Organic rank of the queried (target) ASIN for this keyword.
-    "organic_rank": [
-        "Organic Rank", "Org. Rank", "Organic Position",
-        "Average Organic Rank", "Organic Rank (avg)",
+    # Monthly search volume — the primary selection signal alongside relevancy.
+    "search_volume": [
+        "Search Volume", "Search Vol", "SV", "Monthly Search Volume",
     ],
-    # Sponsored rank of the queried ASIN for this keyword.
-    "sponsored_rank": [
-        "Sponsored Rank", "Sponsored Position", "Sponsored Rank (avg)",
+    # Search-volume trend (percentage).
+    "search_volume_trend": [
+        "Search Volume Trend", "Search Vol Trend", "SV Trend",
     ],
-    # Position (Rank) — used heavily in later phases (Cerebro reverse-ASIN).
-    "position_rank": [
-        "Position (Rank)", "Position Rank", "Position", "Rank",
+    # Suggested PPC bid — a formatted string range (e.g. "£0.46 (£0.32 – £0.70)").
+    # Kept as text (not parsed numeric).
+    "suggested_ppc_bid": [
+        "Suggested PPC Bid", "Sponsored PPC Bid", "PPC Bid", "Suggested Bid",
     ],
-    # Number of competing products for the keyword (lower = easier).
-    "competing_products": [
-        "Competing Products", "Competing Products Count",
-        "# Competing Products", "Competing", "Products",
-    ],
-    # CPR — H10 "Cerebro Product Rank" 8-day giveaway estimate.
-    "cpr": [
-        "CPR", "CPR 8-Day Giveaways", "Cerebro Product Rank",
-        "CPR (8-Day Giveaways)", "8-Day Giveaways",
-    ],
-    # Title density — how many top listings use the keyword in the title.
-    "title_density": [
-        "Title Density", "Title Density Exact", "Title Density (exact)",
-    ],
-    # Number of sponsored ASINs competing on the keyword.
-    "sponsored_asins": [
-        "Sponsored ASINs", "Sponsored ASIN Count", "# Sponsored ASINs",
-    ],
-    # Keyword sales (estimated units sold via the keyword).
+    # Estimated units sold via the keyword.
     "keyword_sales": [
         "Keyword Sales", "Est. Keyword Sales", "Keyword Sales (est)",
     ],
-    # Word count of the phrase (1 = single word -> often too broad).
-    "word_count": [
-        "Word Count", "Words", "# Words", "Number of Words",
+    # Number of competing products for the keyword (lower = easier).
+    "competing_products": [
+        "Competing Products", "Competing Products Count", "# Competing Products",
     ],
-    # Match type / relevancy descriptors when present.
-    "match_type": [
-        "Match Type", "Keyword Type", "Type",
+    # How many top listings use the keyword in the title.
+    "title_density": [
+        "Title Density", "Title Density Exact", "Title Density (exact)",
     ],
-    # Amazon-recommended rank, when present.
-    "amazon_recommended_rank": [
-        "Amazon Recommended Rank", "Amazon Recommended", "Amazon Rec. Rank",
+    # Average competitor rank for the keyword.
+    "competitor_rank": [
+        "Competitor Rank (avg)", "Competitor Rank Avg", "Competitor Rank",
+        "Avg Competitor Rank",
     ],
 }
 
 # Canonical columns parsed as numeric (strip currency/commas, H10 "-" -> None).
+# suggested_ppc_bid is intentionally excluded — it is a formatted range string.
 NUMERIC_COLUMNS = [
-    "search_volume", "search_volume_trend", "cerebro_iq", "organic_rank",
-    "sponsored_rank", "position_rank", "competing_products", "cpr",
-    "title_density", "sponsored_asins", "keyword_sales", "word_count",
-    "amazon_recommended_rank",
+    "cerebro_iq", "search_volume", "search_volume_trend", "keyword_sales",
+    "competing_products", "title_density", "competitor_rank",
 ]
 
 
@@ -113,7 +86,7 @@ def _find_column(df: pd.DataFrame, canonical: str) -> Optional[str]:
 
     # Broad partial-match fallback (e.g. "Search Volume (UK)" -> search_volume)
     for col in df.columns:
-        col_strip = col.lower().strip()
+        col_strip = str(col).lower().strip()
         for alias in aliases:
             if alias.lower() in col_strip:
                 return col
@@ -145,9 +118,9 @@ def _parse_numeric(value) -> Optional[float]:
         return None
 
 
-def read_cerebro_file(file_path: str) -> Tuple[pd.DataFrame, int]:
+def read_xray_keywords(file_path: str) -> Tuple[pd.DataFrame, int]:
     """
-    Read an H10 Cerebro XLSX/CSV export and return a normalised DataFrame.
+    Read an H10 Xray keyword XLSX/CSV export and return a normalised DataFrame.
 
     Returns
     -------
@@ -155,7 +128,7 @@ def read_cerebro_file(file_path: str) -> Tuple[pd.DataFrame, int]:
         Normalised keyword data with canonical column names. Unmapped columns
         are preserved with a 'raw_' prefix (never discarded).
     raw_row_count : int
-        Number of keyword rows read before any Phase 2 preparation.
+        Number of keyword rows read.
     """
     path = Path(file_path.strip().strip('"').strip("'"))
     if not path.exists():
@@ -165,8 +138,8 @@ def read_cerebro_file(file_path: str) -> Tuple[pd.DataFrame, int]:
 
     if suffix in (".xlsx", ".xls"):
         df_raw: Optional[pd.DataFrame] = None
-        # Cerebro exports sometimes carry one or two metadata rows above the
-        # header. Accept the first read where a keyword-like column appears.
+        # Accept the first read where a keyword-like column appears (handles any
+        # metadata rows above the header).
         for skip in (0, 1, 2):
             try:
                 tmp = pd.read_excel(path, engine="openpyxl", skiprows=skip)
@@ -189,7 +162,7 @@ def read_cerebro_file(file_path: str) -> Tuple[pd.DataFrame, int]:
     data: Dict[str, pd.Series] = {}
     for canonical in COLUMN_MAPPINGS:
         actual = _find_column(df_raw, canonical)
-        if actual:
+        if actual and actual not in cols_used.values():
             cols_used[canonical] = actual
             data[canonical] = df_raw[actual].reset_index(drop=True)
 
@@ -220,7 +193,7 @@ def read_cerebro_file(file_path: str) -> Tuple[pd.DataFrame, int]:
     print(f"  Columns mapped     : {', '.join(detected_keys) or '(none — check headers)'}")
     if "keyword" not in cols_used:
         print("  WARNING: no keyword-phrase column detected — verify the file is "
-              "a Cerebro export.")
+              "an H10 Xray keyword export.")
     if "search_volume" not in cols_used:
         print("  WARNING: no search-volume column detected — selection prep will "
               "be limited.")

@@ -215,7 +215,7 @@ Phase 1 ends when the user selects one ASIN from the output Excel. That ASIN is 
 
 # Phase 2 — Keyword Verification
 
-Input: the single target ASIN from Phase 1 + the Phase 1 Black Box XLSX (for the product title) + an H10 **Cerebro** keyword export for that ASIN. (Keepa/JS belong to Phase 3, not here.) Output (current build): the launch keywords Claude determines from the product's condensed title, printed to the terminal.
+Input: the single target ASIN from Phase 1 + the Phase 1 Black Box XLSX (for the product title) + an H10 **Xray keyword export** for that product (the Xray Keywords view; it carries the same keyword metrics as Cerebro — Search Volume, Cerebro IQ Score, Competing Products, Title Density, Keyword Sales). (Keepa/JS belong to Phase 3, not here.) Output: the launch keywords Claude selects + the user locks.
 
 **Design rule:** all keyword *judgement* — relevancy to the product and every Step-5 exclusion — is performed **purely by Claude via the API. No deterministic relevancy logic, no heuristic fallback.** If the API key is missing or a call fails, Phase 2 stops and reports it (never guesses).
 
@@ -227,10 +227,10 @@ Pipeline runs through **Step 5 (Claude proposes keywords)** and **Step 6 (user a
 
 ```
 phase2/
-├── cerebro_reader.py   # Cerebro XLSX/CSV -> normalised DataFrame (COLUMN_MAPPINGS, numeric parsing)
+├── xray_reader.py      # H10 Xray keyword XLSX/CSV -> normalised DataFrame (COLUMN_MAPPINGS, numeric parsing)
 ├── keyword_selector.py # prepare_candidates: dedupe + SV>=100 + SV rank (objective only)
-├── claude_client.py    # .env key load; derive_product_name + select_keywords (structured outputs)
-└── main.py             # CLI orchestration through keyword determination
+├── claude_client.py    # .env key load; derive_product_profile + select_keywords (structured outputs)
+└── main.py             # CLI orchestration: profile -> Step 5 propose -> Step 6 approve/swap -> lock
 ```
 
 ## Config / dependencies
@@ -241,8 +241,8 @@ phase2/
 
 ## Module Responsibilities (Phase 2)
 
-### `cerebro_reader.py`
-**`read_cerebro_file(path) -> (df, raw_row_count)`** — mirrors Phase 1's reader. Tries `skiprows=0/1/2` to skip metadata (accepts when a keyword/phrase column appears). `COLUMN_MAPPINGS` covers standard Cerebro headers (`keyword`, `search_volume`, `cerebro_iq`, `organic_rank`, `position_rank`, `competing_products`, `cpr`, `title_density`, `word_count`, …) with broad alias fallback; unmapped columns kept as `raw_*`. Numeric cells parsed (currency/commas stripped, H10 `-` -> None). Drops blank-keyword rows. **NOTE: mappings built from documented Cerebro headers, not yet verified against a real export — confirm against a sample file.**
+### `xray_reader.py`
+**`read_xray_keywords(path) -> (df, raw_row_count)`** — mirrors Phase 1's reader. Tries `skiprows=0/1/2` to skip metadata (accepts when a keyword/phrase column appears). `COLUMN_MAPPINGS` is **confirmed against a real Xray keyword export** and covers its columns: `keyword` (Keyword Phrase), `cerebro_iq`, `search_volume`, `search_volume_trend`, `suggested_ppc_bid` (text range, not parsed), `keyword_sales`, `competing_products`, `title_density`, `competitor_rank`. Broad alias fallback; unmapped columns kept as `raw_*`. Numeric cells parsed (currency/commas stripped, H10 `-` -> None). Drops blank-keyword rows.
 
 ### `keyword_selector.py`
 **`prepare_candidates(df, min_search_volume=100) -> (candidates, report)`** — objective prep only: drop blank phrases, de-duplicate on normalised phrase (keep highest SV), drop SV < 100, rank by SV descending. `MIN_SEARCH_VOLUME=100`, `TARGET_KEYWORD_COUNT=6`. No relevancy, no flags, no fallback.
@@ -254,7 +254,7 @@ phase2/
 - Pydantic schemas: `ProductProfile`, `SelectedKeyword`, `KeywordSelection`. `Phase2ApiError` surfaces all failures.
 
 ### `main.py`
-**`run_phase2(blackbox_df=None) -> Optional[list]`**: prompt ASIN -> obtain Black Box data -> look up `{title, category, subcategory}` by ASIN -> `load_client` -> `derive_product_profile` (print profile) -> prompt Cerebro path -> `read_cerebro_file` -> `prepare_candidates` -> `select_keywords` (Step 5 proposal) -> **`_run_approval_loop` (Step 6)** -> print and **return** the locked `SelectedKeyword` list (consumed by Phase 3; no export). Any `Phase2ApiError` or missing data prints a message and returns `None`; empty ASIN cancels.
+**`run_phase2(blackbox_df=None) -> Optional[list]`**: prompt ASIN -> obtain Black Box data -> look up `{title, category, subcategory}` by ASIN -> `load_client` -> `derive_product_profile` (print profile) -> prompt Xray keyword path -> `read_xray_keywords` -> `prepare_candidates` -> `select_keywords` (Step 5 proposal) -> **`_run_approval_loop` (Step 6)** -> print and **return** the locked `SelectedKeyword` list (consumed by Phase 3; no export). Any `Phase2ApiError` or missing data prints a message and returns `None`; empty ASIN cancels.
 
 **Step 6 — `_run_approval_loop(client, profile, candidates, selection, target_count=6)`:** prints the proposed keywords and reads a choice — `Enter`/`y` locks the set; comma/space-separated numbers reject those keywords; `q` cancels. Rejected phrases accumulate into an `exclude` list and approved keywords are kept; it re-calls `select_keywords(target_count=need, exclude=rejected+kept)` for replacements and merges, looping until approval. Returns the locked list or `None` (cancel). Helpers: `_print_keywords`, `_parse_reject_indices`.
 

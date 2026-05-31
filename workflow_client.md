@@ -134,7 +134,7 @@ Products that pass all filters but still carry a warning get a note. Yellow-high
 
 # Phase 2 — Keyword Verification
 
-Phase 2 takes the single ASIN you chose in Phase 1 and finds the best keywords to launch with. **Claude itself decides which keywords are relevant to your product** — there is no rule-of-thumb shortcut. You give it the product and the Cerebro keyword export; it reads them and picks.
+Phase 2 takes the single ASIN you chose in Phase 1 and finds the best keywords to launch with. **Claude itself decides which keywords are relevant to your product** — there is no rule-of-thumb shortcut. You give it the product and the Xray keyword export; it reads them and picks.
 
 ## Before You Start
 
@@ -142,10 +142,10 @@ Phase 2 takes the single ASIN you chose in Phase 1 and finds the best keywords t
 |------|--------|
 | Target ASIN | The one product you selected at the end of Phase 1 |
 | Black Box XLSX | The same Phase 1 export (used to look up the product's title) |
-| Cerebro keyword XLSX | Helium 10 → **Cerebro** → run on your target ASIN → export the full keyword list |
+| Xray keyword XLSX | Helium 10 → **Xray → Keywords** → export the keyword list for your product |
 | Anthropic API key | Put it in a file named **`.env`** in the project folder: `ANTHROPIC_API_KEY=sk-ant-...` (this file is never committed to git) |
 
-> Phase 2 uses **Cerebro** only. Keepa and Jungle Scout come later (Phase 3).
+> The keyword list comes from H10 **Xray (Keywords)**. Keepa and Jungle Scout come later (Phase 3).
 
 ## How to Run
 
@@ -160,7 +160,7 @@ Run Phase 1 as usual. When it finishes (you choose not to see more products), it
 1. **Asks for your target ASIN.**
 2. **Finds that product's title and category** — reusing the Black Box data already loaded in Phase 1 (or asking for the file if you started Phase 2 on its own).
 3. **Builds a product profile** — Claude reads the title + category and works out the product's name, type, key distinguishing features, what it's used for, what it is *not*, and the brand to exclude. This profile is what keyword relevance is judged against (so a slicker brush isn't matched to deshedding-brush keywords). *(Uses the text only — the product image is not sent.)*
-4. **Asks for your Cerebro export** and tidies the list: removes duplicates and anything with fewer than 100 monthly searches.
+4. **Asks for your Xray keyword export** and tidies the list: removes duplicates and anything with fewer than 100 monthly searches.
 5. **Claude proposes the launch keywords** — judging each one's relevance against the profile and removing the product's own brand, competitor brands, misspellings, wrong-category terms, different-product terms, overly broad terms, and question phrases. Each pick comes with a one-line reason.
 6. **You approve or swap** (Step 6): the proposed list is shown and you can
    - press **Enter** to accept and lock the set,
@@ -175,4 +175,4 @@ Run Phase 1 as usual. When it finishes (you choose not to see more products), it
 
 **"Could not find ASIN … in the Black Box file"** — The ASIN you typed isn't in that export. Use the exact ASIN from your Phase 1 results, and the same Black Box file.
 
-**Why does it need the Black Box file again?** A Cerebro export has no product title; the Black Box file is where the product's name lives, and Claude needs to know what the product is to judge keyword relevance.
+**Why does it need the Black Box file again?** An Xray keyword export has no product title; the Black Box file is where the product's name lives, and Claude needs to know what the product is to judge keyword relevance.

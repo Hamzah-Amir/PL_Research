@@ -8,7 +8,8 @@
       "Skill(claude-api)",
       "Skill(claude-api:*)",
       "PowerShell($py = \".\\\\venv\\\\Scripts\\\\python.exe\"; if \\(-not \\(Test-Path $py\\)\\) { $py = \"python\" }; & $py -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['phase1/main.py','phase2/main.py']]; print\\('syntax OK'\\)\")",
-      "PowerShell($py = \".\\\\venv\\\\Scripts\\\\python.exe\"; if \\(-not \\(Test-Path $py\\)\\) { $py = \"python\" }; & $py -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['run.py','phase1/main.py','phase2/main.py']]; print\\('syntax OK'\\)\")"
+      "PowerShell($py = \".\\\\venv\\\\Scripts\\\\python.exe\"; if \\(-not \\(Test-Path $py\\)\\) { $py = \"python\" }; & $py -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['run.py','phase1/main.py','phase2/main.py']]; print\\('syntax OK'\\)\")",
+      "PowerShell($py = \".\\\\venv\\\\Scripts\\\\python.exe\"; if \\(-not \\(Test-Path $py\\)\\) { $py = \"python\" }; $env:PYTHONIOENCODING=\"utf-8\"; & $py _inspect.py)"
     ]
   }
 }

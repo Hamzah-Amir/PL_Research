@@ -14,10 +14,11 @@
   scores, splits by variation count, exports ranked Excel shortlists. User picks
   one **target ASIN**.
 - **Phase 2 — Keyword Verification — FUNCTIONALLY COMPLETE.** From the target
-  ASIN + Cerebro export, Claude builds a product profile and selects the launch
-  keywords; the user approves/swaps until the set is **locked**. `run_phase2()`
-  **returns** the locked keywords. (Remaining: a first live API run + verifying
-  Cerebro column mappings against a real export.)
+  ASIN + an **H10 Xray keyword export**, Claude builds a product profile and
+  selects the launch keywords; the user approves/swaps until the set is
+  **locked**. `run_phase2()` **returns** the locked keywords. (Reader column
+  mappings are verified against a real Xray export; remaining: a first live API
+  run.)
 - **Phase 3 — Competitor Identification + Analysis — NOT STARTED.** This is the
   next build. Phases 4–7 remain PDF-only; do not start them.
 
@@ -41,7 +42,7 @@
 
 ```
 phase1/  file_reader.py · filters.py · scorer.py · output.py · main.py
-phase2/  cerebro_reader.py · keyword_selector.py · claude_client.py · main.py
+phase2/  xray_reader.py · keyword_selector.py · claude_client.py · main.py
 run.py   always Phase 1 -> Phase 2 (no menu)
 ```
 
@@ -51,7 +52,7 @@ run.py   always Phase 1 -> Phase 2 (no menu)
   heuristic fallback (Rule 0: never guess; mark unknown / surface to user).
 - **Column normalisation:** every tool export is read through a `COLUMN_MAPPINGS`
   dict with broad alias fallback + numeric parsing (strip currency/commas, H10
-  `-` -> None). See `phase1/file_reader.py` and `phase2/cerebro_reader.py`. New
+  `-` -> None). See `phase1/file_reader.py` and `phase2/xray_reader.py`. New
   Phase 3 readers (JS / Keepa / Xray) need the same treatment.
 - **Claude client pattern** (`phase2/claude_client.py`): `.env` key via
   `python-dotenv`; model `claude-opus-4-8`; adaptive thinking; structured
@@ -114,12 +115,15 @@ locked keywords from Phase 2, plus three new uploads.
 ## 5. Open decisions to confirm at the start of Phase 3
 
 1. **Module shape:** a `phase3/` package mirroring prior phases —
-   `js_reader.py`, `keepa_reader.py`, `xray_reader.py`, `competitor_selector.py`
-   (Claude same-product-type + scoring), `output.py`, `main.py`? Recommend
-   mirroring.
+   `js_reader.py`, `keepa_reader.py`, `xray_product_reader.py`,
+   `competitor_selector.py` (Claude same-product-type + scoring), `output.py`,
+   `main.py`? Recommend mirroring. (NB: Phase 3's Xray export is the
+   product/listing search — distinct from Phase 2's `xray_reader.py`, which
+   reads the Xray *Keywords* export. Name the Phase 3 one accordingly.)
 2. **Real exports needed first:** capture actual **Jungle Scout CSV**, **Keepa
-   XLSX**, and **Xray XLSX** headers to build their `COLUMN_MAPPINGS` (as with
-   Cerebro — current Cerebro mappings are still unverified against a real file).
+   XLSX**, and **Xray product XLSX** headers to build their `COLUMN_MAPPINGS`
+   (the same way `phase2/xray_reader.py` was confirmed against a real Xray
+   keyword export).
 3. **The PES Excel template:** Step 10 fills a specific multi-tab Competitor
    Analysis workbook. The real template is required to map exact cells/tabs;
    without it, only the data model can be built. Obtain the template.

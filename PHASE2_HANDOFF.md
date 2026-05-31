@@ -18,14 +18,15 @@ ASIN** from the output to carry into Phase 2.
 Claude proposes the launch keywords (Step 5) and the user approves/swaps until
 the set is locked (Step 6). The locked set is printed and **returned** from
 `run_phase2()` for Phase 3 — no Excel export (the keywords feed Phase 3's
-competitor analysis sheet). Remaining: a first live API run + verifying the
-Cerebro column mappings against a real export.
+competitor analysis sheet). Reader column mappings are verified against a real
+Xray keyword export; remaining: a first live API run.
 
 Phases 3–7 exist only in the PDF blueprint; do not start them.
 
 ### Phase 2 resolved decisions (so future work matches)
 - **Inputs:** target ASIN (typed) + Phase 1 Black Box XLSX (for the title) +
-  H10 **Cerebro** export. Cerebro only — Keepa/JS are Phase 3.
+  an **H10 Xray keyword export** (Xray Keywords view; same metrics as Cerebro).
+  Keyword file only — Keepa/JS are Phase 3.
 - **All keyword judgement is purely Claude via API** — relevancy + every Step-5
   exclusion. **No deterministic relevancy logic, no heuristic fallback.** Only
   objective prep (dedupe + SV ≥ 100) is deterministic.
@@ -38,8 +39,8 @@ Phases 3–7 exist only in the PDF blueprint; do not start them.
 - **API key:** git-ignored `.env` in project root (`ANTHROPIC_API_KEY`), loaded
   via `python-dotenv`. Model: `claude-opus-4-8`, adaptive thinking, structured
   outputs (`messages.parse`), prompt caching on the product + candidate prefix.
-- **Modules:** `phase2/cerebro_reader.py`, `keyword_selector.py`,
-  `claude_client.py`, `main.py`.
+- **Modules:** `phase2/xray_reader.py` (reads the H10 Xray keyword export;
+  `read_xray_keywords`), `keyword_selector.py`, `claude_client.py`, `main.py`.
 - **Phase 1 → Phase 2 connected (automatic):** `run.py`/`run.ps1` always start
   at Phase 1 (no menu). Phase 1 ends by calling `run_phase2(blackbox_df=df)`
   directly (no confirm) with the loaded Black Box frame — Phase 2 reuses it and
@@ -51,8 +52,10 @@ Phases 3–7 exist only in the PDF blueprint; do not start them.
   for replacements until the user locks the set.
 
 ### Remaining for Phase 2
-1. Verify `cerebro_reader.COLUMN_MAPPINGS` against a **real** Cerebro export.
-2. First live end-to-end API run (the two Claude calls are unexercised against a real key/files).
+1. First live end-to-end API run (the two Claude calls are unexercised against a real key/files).
+
+(`xray_reader.COLUMN_MAPPINGS` is verified against the real
+`test_file/Xray_Keyword2026-05-31.xlsx` export.)
 
 (No Excel export — locked keywords are returned from `run_phase2()` and consumed by Phase 3.)
 
