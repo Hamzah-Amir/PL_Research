@@ -92,21 +92,38 @@ class ProductHistory(models.Model):
 
 
 class ProductReviewsInsights(models.Model):
-    asin = models.CharField(max_length=20, db_index=True)
-    common_complaints = models.TextField(null=True, blank=True)
-    negative_keywords = models.JSONField(null=True, blank=True)
+    """Claude's distilled review analysis for one product (one row per ASIN).
+
+    Mirrors the `ReviewAnalysis` Claude returns in
+    research/phase3/claude_client.py: top-3 weaknesses, an index-aligned
+    solution per weakness, and top-3 strengths. This is the cached *verdict*
+    over the raw rows in `product_reviews`. Django-managed (the table is part
+    of the new web layer, not the legacy ingest schema in phase1/db.py).
+
+    `updated_at` is the freshness marker for re-scrape decisions (e.g. reuse
+    if younger than N days, else re-analyse).
+    """
+
+    product = models.OneToOneField(
+        Product,
+        to_field="asin",
+        db_column="asin",
+        on_delete=models.CASCADE,
+        related_name="insight",
+        primary_key=True,
+    )
+    weaknesses = models.JSONField(default=list, blank=True)   # top 3 recurring complaints (1-3★)
+    solutions = models.JSONField(default=list, blank=True)    # concrete fix per weakness, index-aligned
+    strengths = models.JSONField(default=list, blank=True)    # top 3 praised features (4-5★)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "product_reviews_insights"
         verbose_name_plural = "Product reviews insights"
-        managed = False  # table is created/owned by research/phase1/db.py
-        indexes = [
-            models.Index(fields=["asin"], name="idx_insights_asin"),
-        ]
 
     def __str__(self):
-        return f"insights:{self.asin}"
+        return f"insight:{self.product_id}"
 
 
 class Review(models.Model):
