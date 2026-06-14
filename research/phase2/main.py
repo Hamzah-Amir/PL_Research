@@ -35,14 +35,14 @@ from typing import List, Optional
 
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent  # project root (above research/)
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from phase1.file_reader import read_blackbox_file
-from phase2.xray_reader import read_xray_keywords
-from phase2.keyword_selector import prepare_candidates
-from phase2.claude_client import (
+from research.phase1.file_reader import read_blackbox_file
+from research.phase2.xray_reader import read_xray_keywords
+from research.phase2.keyword_selector import prepare_candidates
+from research.phase2.claude_client import (
     Phase2ApiError,
     load_client,
     derive_product_profile,
@@ -203,44 +203,58 @@ def _run_approval_loop(client, profile, candidates, selection, target_count=6):
 # Main flow
 # ──────────────────────────────────────────────────────────────────────────────
 
-def run_phase2(blackbox_df: Optional[pd.DataFrame] = None) -> Optional[list]:
+def run_phase2(
+    blackbox_df: Optional[pd.DataFrame] = None,
+    target_product: Optional[dict] = None,
+) -> Optional[dict]:
     """Run Phase 2.
 
-    When chained from Phase 1, the already-loaded Black Box DataFrame is passed
-    in via *blackbox_df* so the user is NOT asked to re-upload the file. When run
-    standalone (``python -m phase2.main``), *blackbox_df* is None and the file
-    path is prompted for.
+    Three entry modes for obtaining the target product's title/category:
+      - *target_product* (preferred): a dict ``{asin, title, category,
+        subcategory}`` handed in by the DB-backed Phase 1 — no ASIN prompt, no
+        Black Box file needed.
+      - *blackbox_df*: an in-memory Black Box frame (legacy chaining) — prompts
+        for the ASIN and looks it up.
+      - neither (``python -m phase2.main``): prompts for the ASIN and the Black
+        Box file path.
 
-    Returns the locked list of ``SelectedKeyword`` (consumed by Phase 3's
-    competitor analysis), or ``None`` if cancelled / unable to complete.
+    Returns a dict ``{"target_asin", "keywords", "target_product"}`` consumed by
+    Phase 3, or ``None`` if cancelled / unable to complete.
     """
     _banner()
 
-    # ── 1. Target ASIN ────────────────────────────────────────────────────────
-    asin = _get_target_asin()
-    if not asin:
-        print("\n  No ASIN entered — exiting Phase 2.")
-        return
-
-    # ── 2. Black Box data → product title ─────────────────────────────────────
-    # Reuse Phase 1's in-memory data when chained; otherwise prompt for the file.
-    if blackbox_df is not None:
-        _section("USING PHASE 1 PRODUCT DATA")
-        print(f"  Reusing {len(blackbox_df)} products from Phase 1 — no re-upload needed.")
-        bb_df = blackbox_df
+    # ── 1-2. Target product (ASIN + title/category) ───────────────────────────
+    if target_product and target_product.get("asin") and target_product.get("title"):
+        asin = str(target_product["asin"]).strip().upper()
+        product_row = {
+            "title": target_product.get("title", ""),
+            "category": target_product.get("category", ""),
+            "subcategory": target_product.get("subcategory", ""),
+        }
+        _section("USING PHASE 1 TARGET PRODUCT")
+        print(f"  Carried from Phase 1 — no ASIN entry or file needed.")
     else:
-        bb_path = _get_file_path(
-            "Paste the full path to your Phase 1 Helium 10 Black Box XLSX export.",
-            "BLACK BOX FILE",
-        )
-        _section("READING BLACK BOX")
-        bb_df, _ = read_blackbox_file(bb_path)
+        asin = _get_target_asin()
+        if not asin:
+            print("\n  No ASIN entered — exiting Phase 2.")
+            return
+        if blackbox_df is not None:
+            _section("USING PHASE 1 PRODUCT DATA")
+            print(f"  Reusing {len(blackbox_df)} products from Phase 1 — no re-upload needed.")
+            bb_df = blackbox_df
+        else:
+            bb_path = _get_file_path(
+                "Paste the full path to your Phase 1 Helium 10 Black Box XLSX export.",
+                "BLACK BOX FILE",
+            )
+            _section("READING BLACK BOX")
+            bb_df, _ = read_blackbox_file(bb_path)
 
-    product_row = _lookup_product(bb_df, asin)
-    if not product_row:
-        print(f"\n  Could not find ASIN {asin} (with a title) in the Black Box file.")
-        print("  Verify the ASIN matches one in that export and try again.")
-        return
+        product_row = _lookup_product(bb_df, asin)
+        if not product_row:
+            print(f"\n  Could not find ASIN {asin} (with a title) in the Black Box file.")
+            print("  Verify the ASIN matches one in that export and try again.")
+            return
     print(f"\n  Target ASIN  : {asin}")
     print(f"  Title        : {product_row['title']}")
     if product_row.get("category") or product_row.get("subcategory"):
@@ -273,6 +287,24 @@ def run_phase2(blackbox_df: Optional[pd.DataFrame] = None) -> Optional[list]:
     print(f"  Use cases      : {', '.join(product.use_cases) or '(none)'}")
     print(f"  NOT this       : {', '.join(product.not_this) or '(none)'}")
     print(f"  Brand          : {product.brand or '(none)'}")
+
+    # ── Start the Phase 3 JS-sheet generation NOW (main search term known) ────
+    # Claude just extracted the product type from the target's title — that is
+    # the main search term. The Amazon page-1 scrape + Keepa pull run in a
+    # background thread through the rest of Phase 2, so the sheet is ready the
+    # moment Phase 3 needs it (no waiting, no Jungle Scout subscription).
+    js_autogen = None
+    main_term = (product.product_type or "").strip()
+    if main_term:
+        try:
+            from research.phase3.js_sheet import start_background
+            print(f"\n  Main search term: '{main_term}' — generating the Phase 3")
+            print("  competitor sheet in the background (Amazon page 1 + Keepa,")
+            print("  ~2 Keepa tokens per product)...")
+            js_autogen = {"keyword": main_term, "job": start_background(main_term)}
+        except Exception as e:  # noqa: BLE001 — Phase 3 falls back to manual upload
+            print(f"\n  Could not start the JS-sheet generation: {e}")
+            print("  Phase 3 will offer auto-generation or a manual file instead.")
 
     # ── 4. Xray keyword file → candidate keywords ─────────────────────────────
     kw_path = _get_file_path(
@@ -322,8 +354,19 @@ def run_phase2(blackbox_df: Optional[pd.DataFrame] = None) -> Optional[list]:
     print("=" * 65)
     print()
 
-    # Returned so Phase 3 can consume the locked keywords directly (no export).
-    return locked
+    # Returned so Phase 3 can consume the target + locked keywords directly.
+    # js_autogen carries the in-flight JS-sheet generation (started at profile
+    # time); Phase 3 joins it instead of making the user wait or upload a file.
+    return {
+        "target_asin": asin,
+        "keywords": locked,
+        "js_autogen": js_autogen,
+        "target_product": target_product or {
+            "asin": asin, "title": product_row.get("title", ""),
+            "category": product_row.get("category", ""),
+            "subcategory": product_row.get("subcategory", ""),
+        },
+    }
 
 
 if __name__ == "__main__":
