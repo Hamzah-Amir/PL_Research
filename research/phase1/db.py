@@ -6,8 +6,9 @@ Postgres, scored, and queried by budget (no live API at query time). This module
 owns the connection (from `DATABASE_URL` in the project-root `.env`) and the
 schema.
 
-Schema = the agreed spec (products / product_history / product_reviews_insights)
-plus a few fields needed by the rest of the tool:
+Schema = the agreed spec (products / product_history) plus a few fields needed
+by the rest of the tool (the review tables — product_reviews and
+product_reviews_insights — are owned by the Django web layer, not here):
   - `variation_count` / `has_variants`  — for the with/without-variants filter
     (Black Box "Variation Count": 0 = none, >0 = has variants).
   - `brand, fulfillment, image_url, url, listing_age_months, estimated_revenue,
@@ -112,14 +113,8 @@ CREATE TABLE IF NOT EXISTS product_history (
 );
 CREATE INDEX IF NOT EXISTS idx_history_asin ON product_history (asin);
 
-CREATE TABLE IF NOT EXISTS product_reviews_insights (
-    id                SERIAL PRIMARY KEY,
-    asin              TEXT NOT NULL,
-    common_complaints TEXT,
-    negative_keywords JSONB,
-    created_at        TIMESTAMP NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_insights_asin ON product_reviews_insights (asin);
+-- NOTE: product_reviews and product_reviews_insights are owned by the Django
+-- web layer (products app, managed models), not this pipeline schema.
 
 -- Columns added after the initial build (idempotent for existing tables).
 ALTER TABLE products ADD COLUMN IF NOT EXISTS weight_kg        NUMERIC;
