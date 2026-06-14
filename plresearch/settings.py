@@ -62,8 +62,6 @@ MIDDLEWARE = [
 ROOT_URLCONF = 'plresearch.urls'
 
 
-STATICFILES_DIRS = [ BASE_DIR / 'static' ]
-
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -168,9 +166,13 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+# Project-wide static sources (your own CSS/JS), searched in development.
+STATICFILES_DIRS = [BASE_DIR / 'static']
+# Destination for `collectstatic` in production (served by the web server).
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# Media files (user uploads: Black Box / Xray exports, and generated output
-# such as the Excel shortlists the researcher writes).
+# Media files — user uploads (Black Box / Xray exports) and generated output
+# such as the Excel shortlists the researcher writes.
 # https://docs.djangoproject.com/en/5.2/topics/files/
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
