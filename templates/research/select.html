@@ -1,0 +1,158 @@
+{% extends "layout.html" %}
+{% block title %}Phase 2 — Keywords{% endblock title %}
+{% block body %}
+<div class="mx-auto max-w-4xl px-4 py-8">
+
+  {# ── Target product header ───────────────────────────────────────────── #}
+  {% if product %}
+    <div class="mb-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-indigo-600">Phase 2 · Keyword verification</p>
+      <h1 class="mt-1 text-xl font-bold text-slate-800">{{ product.asin }}</h1>
+      <p class="mt-1 text-slate-700">{{ product.title }}</p>
+      <p class="mt-1 text-sm text-slate-500">
+        {{ product.category }}{% if product.subcategory %} · {{ product.subcategory }}{% endif %}
+      </p>
+    </div>
+  {% else %}
+    <div class="rounded-xl border border-rose-200 bg-rose-50 p-6">
+      <h1 class="text-lg font-bold text-rose-800">ASIN not found</h1>
+      <p class="mt-1 text-rose-700">No product matches “{{ asin }}”.</p>
+      <a href="{% url 'research:research' %}" class="mt-3 inline-block text-sm font-medium text-indigo-600 hover:underline">← Back to filters</a>
+    </div>
+  {% endif %}
+
+  {% if product %}
+    {% if error %}
+      <div class="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{{ error }}</div>
+    {% endif %}
+    {% if result.error %}
+      <div class="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+        <span class="font-semibold">Phase 2 couldn’t complete:</span> {{ result.error }}
+      </div>
+    {% endif %}
+
+    {# ── Upload the Xray keyword file (initial run / new file) ──────────── #}
+    {% if not result.selection %}
+      <div class="mb-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 class="text-base font-semibold text-slate-800">Upload Xray keyword export</h2>
+        <p class="mt-1 text-sm text-slate-500">
+          Upload this product’s Helium 10 <span class="font-medium">Xray keyword</span> export (.xlsx / .csv).
+          Claude builds a product profile and picks the best launch keywords.
+        </p>
+        <form action="{% url 'research:select' asin=asin %}" method="post" enctype="multipart/form-data"
+              class="mt-4 flex flex-wrap items-center gap-3">
+          {% csrf_token %}
+          <input type="file" name="xray_file" accept=".xlsx,.xls,.csv" required
+                 class="text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600
+                        file:px-4 file:py-2 file:text-white hover:file:bg-indigo-700">
+          <button type="submit"
+                  class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+            Run Phase 2 →
+          </button>
+        </form>
+      </div>
+    {% endif %}
+
+    {# ── Results: profile + keywords ───────────────────────────────────── #}
+    {% if result.selection %}
+      {% with profile=result.profile %}
+        <div class="mb-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="text-base font-semibold text-slate-800">Product profile <span class="text-slate-400">(Claude)</span></h2>
+            <span class="text-sm text-slate-500">Main search term:
+              <span class="rounded-full bg-indigo-50 px-2.5 py-0.5 font-medium text-indigo-700">{{ result.main_search_term }}</span>
+            </span>
+          </div>
+          <dl class="mt-4 grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+            <div><dt class="text-slate-400">Name</dt><dd class="text-slate-800">{{ profile.product_name }}</dd></div>
+            <div><dt class="text-slate-400">Type</dt><dd class="text-slate-800">{{ profile.product_type }}</dd></div>
+            <div><dt class="text-slate-400">Key attributes</dt><dd class="text-slate-800">{{ profile.key_attributes|join:", " }}</dd></div>
+            <div><dt class="text-slate-400">Use cases</dt><dd class="text-slate-800">{{ profile.use_cases|join:", " }}</dd></div>
+            <div><dt class="text-slate-400">NOT this</dt><dd class="text-slate-800">{{ profile.not_this|join:", "|default:"—" }}</dd></div>
+            <div><dt class="text-slate-400">Brand (excluded)</dt><dd class="text-slate-800">{{ profile.brand|default:"—" }}</dd></div>
+          </dl>
+        </div>
+      {% endwith %}
+
+      {% if result.js_autogen %}
+        <div class="mb-6 rounded-lg border border-amber-100 bg-amber-50 p-3 text-sm text-amber-800">
+          Phase 3 competitor sheet is generating in the background for
+          “<span class="font-medium">{{ result.js_autogen.keyword }}</span>”.
+        </div>
+      {% endif %}
+
+      <div class="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div class="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+          <h2 class="text-base font-semibold text-slate-800">
+            Top {{ result.selection.keywords|length }} launch keywords
+          </h2>
+          <span class="text-xs text-slate-400">Tick keywords to reject, then swap for fresh picks</span>
+        </div>
+
+        {# Swap form: reject some keywords -> Claude picks replacements (re-uses the saved upload) #}
+        <form action="{% url 'research:select' asin=asin %}" method="post">
+          {% csrf_token %}
+          <table class="min-w-full text-sm text-slate-700">
+            <thead class="text-xs uppercase tracking-wide text-slate-400">
+              <tr>
+                <th class="px-6 py-2 text-left">Reject</th>
+                <th class="px-6 py-2 text-left">Keyword</th>
+                <th class="px-6 py-2 text-right">Search vol.</th>
+                <th class="px-6 py-2 text-center">Relevancy</th>
+                <th class="px-6 py-2 text-left">Reason</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+              {% for kw in result.selection.keywords %}
+                <tr class="hover:bg-slate-50">
+                  <td class="px-6 py-3"><input type="checkbox" name="exclude" value="{{ kw.keyword }}"
+                        class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"></td>
+                  <td class="px-6 py-3 font-medium text-slate-800">{{ kw.keyword }}</td>
+                  <td class="px-6 py-3 text-right">{{ kw.search_volume }}</td>
+                  <td class="px-6 py-3 text-center">
+                    {% if kw.relevancy == 'high' %}
+                      <span class="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">high</span>
+                    {% elif kw.relevancy == 'medium' %}
+                      <span class="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700">medium</span>
+                    {% else %}
+                      <span class="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-700">{{ kw.relevancy }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="px-6 py-3 text-slate-600">{{ kw.reason }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+
+          {% if result.selection.note %}
+            <p class="px-6 py-3 text-sm text-slate-500"><span class="font-medium text-slate-600">Note:</span> {{ result.selection.note }}</p>
+          {% endif %}
+
+          <div class="flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 px-6 py-4">
+            <button type="submit"
+                    class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+              ↻ Swap rejected keywords
+            </button>
+            <a href="{% url 'research:phase3' asin=asin %}"
+               class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+              Accept these keywords &amp; start Phase 3 →
+            </a>
+          </div>
+        </form>
+      </div>
+
+      {% if result.prep_report %}
+        <details class="mt-4 text-sm text-slate-500">
+          <summary class="cursor-pointer select-none">Candidate preparation ({{ result.candidates|length }} keywords)</summary>
+          <ul class="mt-2 space-y-1 font-mono text-xs">
+            {% for line in result.prep_report %}<li>{{ line }}</li>{% endfor %}
+          </ul>
+        </details>
+      {% endif %}
+    {% endif %}
+
+    <a href="{% url 'research:products' %}" class="mt-6 inline-block text-sm font-medium text-indigo-600 hover:underline">← Back to shortlist</a>
+  {% endif %}
+
+</div>
+{% endblock body %}

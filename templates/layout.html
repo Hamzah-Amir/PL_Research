@@ -1,3 +1,4 @@
+{% load static tailwind_tags %}
 {% load static %}
 <!DOCTYPE html>
 <html lang="en">
@@ -6,13 +7,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}{% endblock title %}</title>
     {% block extra_head %}{% endblock extra_head %}
+    {% tailwind_css %}
 </head>
 <body>
     <header>
-        
+        <nav class="flex items-center justify-between p-4 bg-indigo-200 border-b border-slate-200">
+            <div class="logo text-2xl cursor-pointer font-bold">PL Research</div>
+            <ul class='flex cursor-pointer justify-center items-center space-x-4'>
+                <li>Home</li>
+                <li>Pricing</li>
+                <li>Dashboard</li>
+            </ul>
+            <ul class='flex items-center space-x-4'>
+                <li><button class="bg-blue-500 cursor-pointer hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Get Started</button></li>
+                <li><button class="bg-transparent cursor-pointer hover:bg-gray-200 text-gray-800 font-semibold py-2 px-4 border border-gray-400 rounded">Log In</button></li>
+            </ul>
+        </nav>
     </header>
     
-    <main>
+    <main class='bg-slate-50'>
     {% block body %}{% endblock body %}    
     </main>
 
