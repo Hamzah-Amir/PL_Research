@@ -46,8 +46,12 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'research.apps.ResearchConfig',
-    'products.apps.ProductsConfig'
+    'products.apps.ProductsConfig',
+    'tailwind',
+    'theme',
 ]
+
+TAILWIND_APP_NAME = 'theme'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -65,7 +69,7 @@ ROOT_URLCONF = 'plresearch.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],  # global templates (e.g. base.html)
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [

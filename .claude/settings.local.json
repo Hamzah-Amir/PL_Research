@@ -9,7 +9,13 @@
       "Skill(claude-api:*)",
       "PowerShell($py = \".\\\\venv\\\\Scripts\\\\python.exe\"; if \\(-not \\(Test-Path $py\\)\\) { $py = \"python\" }; & $py -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['phase1/main.py','phase2/main.py']]; print\\('syntax OK'\\)\")",
       "PowerShell($py = \".\\\\venv\\\\Scripts\\\\python.exe\"; if \\(-not \\(Test-Path $py\\)\\) { $py = \"python\" }; & $py -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['run.py','phase1/main.py','phase2/main.py']]; print\\('syntax OK'\\)\")",
-      "PowerShell($py = \".\\\\venv\\\\Scripts\\\\python.exe\"; if \\(-not \\(Test-Path $py\\)\\) { $py = \"python\" }; $env:PYTHONIOENCODING=\"utf-8\"; & $py _inspect.py)"
+      "PowerShell($py = \".\\\\venv\\\\Scripts\\\\python.exe\"; if \\(-not \\(Test-Path $py\\)\\) { $py = \"python\" }; $env:PYTHONIOENCODING=\"utf-8\"; & $py _inspect.py)",
+      "WebSearch",
+      "WebFetch(domain:www.junglescout.com)",
+      "WebFetch(domain:support.junglescout.com)",
+      "Bash(./venv/Scripts/python.exe -m pip install \"beautifulsoup4>=4.12.0\" -q)",
+      "Bash(./venv/Scripts/python.exe -c \"import phase3.review_scraper as r; print\\('import OK'\\); print\\('bs4 loaded:', r.BeautifulSoup is not None\\)\")",
+      "Bash(./venv/Scripts/python.exe -m phase3.review_scraper B09B8V1LZ3 --pages 1 --delay 0.5)"
     ]
   }
 }

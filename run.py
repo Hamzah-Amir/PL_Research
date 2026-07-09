@@ -1,15 +1,14 @@
 """
-Root-level launcher. Always starts at Phase 1; Phase 1 hands off into Phase 2
-(keyword verification) at the end, reusing the loaded Black Box data.
-Usage:
-    python run.py
+Phase 1 is now a Django ORM library, not a CLI. Querying the stored dataset
+happens through the web layer:
 
-(To exercise Phase 2 in isolation during development, run:
-    python -m phase2.main
- — it will prompt for the Black Box file since there is no Phase 1 data.)
+    from research.phase1 import run_query
+    result = run_query(budget=2000, category=None, include_seasonal=True)
+
+Phases 2 and 3 are likewise libraries now (research.services.phase2.run_phase2,
+research.services.phase3.run_phase3). Run the site with
+`python manage.py runserver`.
 """
 
-from phase1.main import run_phase1
-
 if __name__ == "__main__":
-    run_phase1()
+    print(__doc__)
