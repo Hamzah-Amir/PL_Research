@@ -135,8 +135,9 @@ def phase3(request, asin):
             comps = []
             for s in result['scored']:
                 rec = recs.get(s['asin'], {})
-                rows = [{'label': label, 'score': s['elements'][key]['score'], 'max': mx}
-                        for key, label, mx, _ in ELEMENTS if key in s.get('elements', {})]
+                rows = [{'label': label, 'score': s['elements'][key]['score'],
+                         'max': s['elements'][key]['max']}
+                        for key, label, _mx, _ in ELEMENTS if key in s.get('elements', {})]
                 comps.append({
                     'asin': s['asin'], 'brand': rec.get('brand'), 'title': rec.get('title'),
                     'total': s['total'], 'max': s['max'], 'band': s['band'],

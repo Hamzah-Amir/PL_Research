@@ -852,11 +852,12 @@ def start_background(keyword: str):
 # ==============================================================================
 # scorer
 # ==============================================================================
-MAX_TOTAL = 184
+MAX_TOTAL = 100          # the raw 184-point rubric is rescaled to /100 for output
+_RAW_MAX_TOTAL = 184
 BANDS = [
-    (0, 86, "Easy to compete — high chance of success for a new seller"),
-    (87, 134, "Mid-range challenge — need a strong plan to beat weaknesses"),
-    (135, 184, "Difficult — established competition, high chance of failure"),
+    (0, 47, "Easy to compete — high chance of success for a new seller"),
+    (48, 73, "Mid-range challenge — need a strong plan to beat weaknesses"),
+    (74, 100, "Difficult — established competition, high chance of failure"),
 ]
 
 # Element order + max points. Marketing title/bullets reuse the product-page
@@ -886,6 +887,24 @@ ELEMENTS = [
     ("enhanced_content", "Enhanced Content (A+/Video)", 5, "MARKET MOMENTUM"),
 ]
 ELEMENT_MAX = {k: m for k, _, m, _ in ELEMENTS}
+
+
+def _rescale_to_100(elements):
+    """Proportionally rescale the raw element maxes (sum 184) to integer weights
+    that sum to exactly 100 (largest-remainder method), preserving relative
+    weightage."""
+    raw = [(k, m) for k, _, m, _ in elements]
+    total = sum(m for _, m in raw) or 1
+    exact = [(k, m * 100.0 / total) for k, m in raw]
+    weights = {k: int(x) for k, x in exact}
+    for _, k in sorted(((x - int(x), k) for k, x in exact), reverse=True)[:100 - sum(weights.values())]:
+        weights[k] += 1
+    return weights
+
+
+# Per-element /100 weight (sums to exactly 100). Raw ELEMENT_MAX still drives the
+# scoring math; scores are rescaled to these weights for the output.
+SCALED_ELEMENT_MAX = _rescale_to_100(ELEMENTS)
 
 
 def _scr_num(v) -> Optional[float]:
@@ -1101,7 +1120,18 @@ def score_competitor(
             sc, why = 1, "Minimal media."
         el["enhanced_content"] = _e(sc, 5, why, f"A+={ap} video={vid} imgs={imgs}")
 
-    # Totals
+    # Rescale the raw 184-point rubric to a 100-point scale (proportional
+    # weightage): each element's max becomes its /100 weight and its score is
+    # scaled to that weight. Relative weightings are preserved; the total is now
+    # out of 100.
+    for k, v in el.items():
+        raw_max = ELEMENT_MAX.get(k) or v.get("max")
+        new_max = SCALED_ELEMENT_MAX.get(k, raw_max)
+        if v.get("score") is not None and raw_max:
+            v["score"] = round(v["score"] * new_max / raw_max)
+        v["max"] = new_max
+
+    # Totals (now on the /100 scale)
     total = sum(v["score"] for v in el.values() if v["score"] is not None)
     unknown = [k for k, v in el.items() if v["score"] is None]
     band = next((d for lo, hi, d in BANDS if lo <= total <= hi), "")
@@ -2258,6 +2288,8 @@ def _fill_block(ws, start: int, end: int, comp: Dict, scored: Dict, review) -> L
         if key and key in elements and key not in seen_keys:
             seen_keys.add(key)
             el = elements[key]
+            # Rescaled /100 weight -> col K, so SUM(K) (the Max Score) = 100.
+            ws[f"{COL_MAX}{r}"] = el.get("max")
             if el["score"] is None:
                 ws[f"{COL_INFO}{r}"] = el.get("info") or "Unknown — need user confirmation"
                 ws[f"{COL_SCORE}{r}"] = None
@@ -2448,6 +2480,19 @@ def _fill_sponsored_products(wb, keywords: List[str]) -> None:
             ws.cell(row=start + i, column=4, value=kw)  # col D = Keyword
 
 
+def _rescale_band_labels(ws) -> None:
+    """Rewrite the template's static 'Score Levels' ranges to the /100 bands so
+    the sheet's legend matches the rescaled scoring."""
+    targets = [f"{lo}-{hi}" for lo, hi, _ in BANDS]
+    replace = {}
+    for old in (("0-75", "76-116", "117-159"), ("0-86", "87-134", "135-184")):
+        replace.update({o: n for o, n in zip(old, targets)})
+    for row in ws.iter_rows():
+        for c in row:
+            if isinstance(c.value, str) and c.value.strip() in replace:
+                c.value = replace[c.value.strip()]
+
+
 def write_competitor_workbook(
     template_path: str,
     top: List[Dict],
@@ -2480,6 +2525,7 @@ def write_competitor_workbook(
 
     _fill_pricing_analysis(wb, top, target_title)
     _fill_sponsored_products(wb, keywords)
+    _rescale_band_labels(ws)
 
     out_dir = Path("output")
     out_dir.mkdir(exist_ok=True)
@@ -2612,7 +2658,8 @@ def write_competitor_pdf(records, scored_by_asin, reviews_by_asin, kw_list,
                 rubric.append([section, ""])
                 last_section = section
             sc = elements[key].get("score")
-            rubric.append([Paragraph(label, cell), f"{'—' if sc is None else sc}/{mx}"])
+            emax = elements[key].get("max", mx)  # rescaled /100 weight
+            rubric.append([Paragraph(label, cell), f"{'—' if sc is None else sc}/{emax}"])
         rt = Table(rubric, colWidths=[112 * mm, 26 * mm], repeatRows=1)
         style = [
             ("BACKGROUND", (0, 0), (-1, 0), INK), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
