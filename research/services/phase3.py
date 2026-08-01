@@ -116,7 +116,9 @@ def load_keepa():
         )
     import keepa
     try:
-        return keepa.Keepa(key)
+        # The library defaults to a 10s read timeout — too short for rich pulls
+        # (stats + rating + buybox for a parent + its variations). Give it room.
+        return keepa.Keepa(key, timeout=60)
     except Exception as e:  # noqa: BLE001
         raise Phase3KeepaError(f"Could not initialise the Keepa client: {e}") from e
 
@@ -348,7 +350,67 @@ def _cookie() -> str:
     return (os.environ.get("AMAZON_COOKIE") or "").strip()
 
 
+# The free plan only serves the HTTP API endpoint (HTTPS 503s); the target URL
+# may still be https. Override with PROXY_ENDPOINT if you upgrade.
+_SCRAPESTACK_ENDPOINT = "http://api.scrapestack.com/scrape"
+# scrapestack error codes that won't fix themselves on retry (bad key, blocked
+# account, plan doesn't allow the feature, monthly quota spent).
+_SCRAPESTACK_FATAL = {"101", "102", "103", "104", "105"}
+
+
+def _scrapestack_key() -> str:
+    """Scrapestack access key from .env (PROXY_API_KEY, or SCRAPESTACK_KEY)."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(dotenv_path=_ENV_PATH)
+    except Exception:  # noqa: BLE001
+        pass
+    return (os.environ.get("PROXY_API_KEY")
+            or os.environ.get("SCRAPESTACK_KEY")
+            or os.environ.get("SCRAPESTACK_ACCESS_KEY") or "").strip()
+
+
+def _scrapestack_error(text: str) -> Optional[str]:
+    """If *text* is a scrapestack JSON error body, return 'code type', else None.
+    (apilayer APIs return HTTP 200 with {"success": false, "error": {...}}.)"""
+    t = (text or "").lstrip()
+    if not t.startswith("{") or "\"success\"" not in t:
+        return None
+    try:
+        import json
+        data = json.loads(t)
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(data, dict) and data.get("success") is False:
+        err = data.get("error") or {}
+        return f"{err.get('code')} {err.get('type')}".strip()
+    return None
+
+
 def _asc_get(url: str, cookie: str, timeout: float = 30):
+    """Fetch *url*. When a scrapestack key is configured (PROXY_API_KEY), route
+    the request through the scrapestack proxy — its rotating 35M-IP pool gets
+    past Amazon's bot-blocking. Otherwise hit Amazon directly (curl_cffi)."""
+    key = _scrapestack_key()
+    if key:
+        params = {"access_key": key, "url": url}
+        # Optional, off by default (render_js / premium_proxy need a paid plan;
+        # premium counts as 25 API calls). Enable via .env if your plan allows.
+        if (os.environ.get("PROXY_RENDER_JS") or "").strip() not in ("", "0"):
+            params["render_js"] = "1"
+        if (os.environ.get("PROXY_PREMIUM") or "").strip() not in ("", "0"):
+            params["premium_proxy"] = "1"
+        loc = (os.environ.get("PROXY_LOCATION") or "").strip()
+        if loc:
+            params["proxy_location"] = loc
+        headers = {}
+        if cookie:  # forward the Amazon session cookie to the target page
+            params["keep_headers"] = "1"
+            headers = {"Cookie": cookie, "User-Agent": _HEADERS["User-Agent"]}
+        # Proxy round-trips (esp. with render_js/premium) are slower than direct.
+        endpoint = (os.environ.get("PROXY_ENDPOINT") or "").strip() or _SCRAPESTACK_ENDPOINT
+        return requests.get(endpoint, params=params, headers=headers,
+                            timeout=max(timeout, 90))
     headers = dict(_HEADERS)
     if cookie:
         headers["Cookie"] = cookie
@@ -369,15 +431,46 @@ def _looks_blocked(html: str) -> bool:
     return len(html) < 100_000 and "data-asin" not in html
 
 
+def _looks_challenge(html: str) -> bool:
+    """Amazon's bot-mitigation interstitial: a tiny HTML page with a meta-refresh
+    carrying a `bm-`/`bm/` token instead of the results. Only a JS-rendering or
+    residential proxy can clear it, so retrying a plain datacenter proxy just
+    wastes quota."""
+    if len(html) > 20_000:
+        return False
+    low = html.lower()
+    return 'http-equiv="refresh"' in low and ("bm-" in html or "/bm/" in low or "botmitigation" in low)
+
+
 def _fetch_page(url: str, cookie: str, retries: int = 4) -> Optional[str]:
     """Fetch one results page; retry on CAPTCHA / soft-block / 5xx with backoff.
     None = blocked after all retries."""
+    proxy = bool(_scrapestack_key())
+    render_js = proxy and (os.environ.get("PROXY_RENDER_JS") or "").strip() not in ("", "0")
+    if proxy:
+        retries = min(retries, 2)  # each attempt spends a scrapestack request
     for attempt in range(retries):
         try:
             r = _asc_get(url, cookie)
         except Exception:  # noqa: BLE001 — network hiccup, retry
             time.sleep(2.0 * (attempt + 1))
             continue
+        # Proxy-layer error (bad key / quota / plan). Fatal ones won't fix on
+        # retry — bail immediately so the caller falls back cleanly.
+        serr = _scrapestack_error(r.text)
+        if serr:
+            print(f"  scrapestack error: {serr} for {url}")
+            if serr.split(" ", 1)[0] in _SCRAPESTACK_FATAL:
+                return None
+            time.sleep(3.0 * (attempt + 1) + random.uniform(0, 2))
+            continue
+        # Amazon bot-mitigation interstitial. Without JS rendering a datacenter
+        # proxy can't clear it — stop now to conserve the request quota.
+        if not render_js and _looks_challenge(r.text):
+            print("  Amazon bot-mitigation challenge via proxy — needs render_js "
+                  "(paid plan) or premium/residential proxy. Set PROXY_RENDER_JS=1 "
+                  "once your scrapestack plan supports it.")
+            return None
         if r.status_code == 200 and not _is_captcha(r.text):
             if _looks_blocked(r.text):
                 time.sleep(3.0 * (attempt + 1) + random.uniform(0, 2))
@@ -1920,8 +2013,28 @@ def select_top_competitors(
     same = same.sort_values(["_sales", "_pres", "_rev"], ascending=False).reset_index(drop=True)
     same = same.drop(columns=["_sales", "_pres", "_rev"])
 
-    top = same.head(n).copy()
-    ff = ", ".join(f"{r.asin}={r.fulfillment}" for r in top.itertuples())
+    # One competitor per brand: `same` is sorted best-first, so keep only the
+    # first (strongest) listing of each brand and drop the rest — that way the
+    # top 3 are distinct brands, not multiple variants of the same brand's
+    # product. Rows with no brand are all kept.
+    deduped = same
+    if "brand" in same.columns:
+        seen_brands: set = set()
+        keep: List = []
+        for idx, brand in same["brand"].items():
+            b = str(brand or "").strip().lower()
+            if b and b in seen_brands:
+                continue
+            if b:
+                seen_brands.add(b)
+            keep.append(idx)
+        deduped = same.loc[keep]
+        dropped = len(same) - len(deduped)
+        if dropped:
+            report.append(f"  Same-brand variants dropped : {dropped} (kept best per brand)")
+
+    top = deduped.head(n).copy()
+    ff = ", ".join(f"{r.asin}={r.fulfillment} ({r.brand})" for r in top.itertuples())
     report.append(f"  Top {len(top)} by sales      : {ff}")
     return top, same, report
 
@@ -1949,6 +2062,26 @@ def _env(name: str) -> str:
     except Exception:  # noqa: BLE001
         pass
     return (os.environ.get(name) or "").strip()
+
+
+def _amazon_cookie() -> str:
+    """The Amazon session cookie for the reviews API, from .env.
+
+    Preferred form: the split variables ``AMAZON_SESSION_ID`` /
+    ``AMAZON_UBID_ACBUK`` / ``AMAZON_X_ACBUK`` / ``AMAZON_AT_ACBUK`` (values
+    copied one-by-one from the browser's cookie panel for amazon.co.uk),
+    joined into the header string here. They take priority over a full
+    ``AMAZON_COOKIE`` header string so a stale machine-level AMAZON_COOKIE
+    can't shadow freshly updated .env values.
+    """
+    parts = (
+        ("session-id", _env("AMAZON_SESSION_ID")),
+        ("ubid-acbuk", _env("AMAZON_UBID_ACBUK")),
+        ("x-acbuk", _env("AMAZON_X_ACBUK")),
+        ("at-acbuk", _env("AMAZON_AT_ACBUK")),
+    )
+    split = "; ".join(f"{n}={v}" for n, v in parts if v)
+    return split or _env("AMAZON_COOKIE")
 
 
 def _rvf_get(path: str, key: str, params: Dict, timeout: float) -> Dict:
@@ -1994,7 +2127,7 @@ def fetch_reviews(asin: str, marketplace: str = "co.uk", timeout: float = 60) ->
     if not key:
         return {"asin": asin, "error": f"RAPIDAPI_KEY not found. Add it to {_ENV_PATH}.",
                 "weaknesses": [], "weaknesses_count": 0}
-    cookie = _env("AMAZON_COOKIE")
+    cookie = _amazon_cookie()
     country = _COUNTRY.get(marketplace.lower(), marketplace.upper())
 
     dist: Dict[str, int] = {}
@@ -2063,7 +2196,13 @@ def fetch_reviews(asin: str, marketplace: str = "co.uk", timeout: float = 60) ->
     # 3★ are excluded by design (user rule).
 
     if not weaknesses and not strengths and errors:
-        return {"asin": asin, "error": "; ".join(errors), "weaknesses": [], "weaknesses_count": 0}
+        msg = "; ".join(errors)
+        if "not subscribed" in msg.lower():
+            msg = ("RAPIDAPI_KEY is not subscribed to the Real-Time Amazon Data API "
+                   "(rapidapi.com, API: real-time-amazon-data) - renew the subscription or "
+                   f"update RAPIDAPI_KEY in {_ENV_PATH}. Reviews were skipped, so the "
+                   "strengths/weaknesses columns fall back to 'Unknown'. Raw: " + msg)
+        return {"asin": asin, "error": msg, "weaknesses": [], "weaknesses_count": 0}
 
     # ── 3. Honest note ────────────────────────────────────────────────────────
     note = ""
@@ -2072,11 +2211,14 @@ def fetch_reviews(asin: str, marketplace: str = "co.uk", timeout: float = 60) ->
     except (TypeError, ValueError):
         neg_pct = 0
     if cookie_dead:
-        note = ("AMAZON_COOKIE appears expired/invalid — Amazon ignored the star filter, "
-                "so only the public detail-page sample was available. Refresh the cookie "
-                "in .env for the full 1-2 star list.")
+        note = ("The Amazon session cookie appears expired/invalid — Amazon ignored the "
+                "star filter, so only the public detail-page sample was available. Refresh "
+                "the cookie values in .env (AMAZON_SESSION_ID / AMAZON_UBID_ACBUK / "
+                "AMAZON_X_ACBUK / AMAZON_AT_ACBUK) for the full 1-2 star list.")
     elif not cookie:
-        note = "No AMAZON_COOKIE in .env — only the public detail-page sample was available."
+        note = ("No Amazon session cookie in .env (AMAZON_SESSION_ID / AMAZON_UBID_ACBUK / "
+                "AMAZON_X_ACBUK / AMAZON_AT_ACBUK, or a full AMAZON_COOKIE) — only the "
+                "public detail-page sample was available.")
     if not gated and not weaknesses and neg_pct:
         note += (" " if note else "") + (
             f"{neg_pct}% of all ratings are 1-2 star but none were retrievable.")

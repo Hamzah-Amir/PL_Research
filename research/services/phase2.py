@@ -435,20 +435,47 @@ def run_phase2(asin: str, xray_file, *, target_count: int = TARGET_KEYWORD_COUNT
         "selection": None, "js_autogen": None, "error": None,
     }
 
+    # Product details come from the ORM (the normal path). DEV FALLBACK: if the
+    # ASIN isn't in the DB (e.g. a directly-entered ASIN that was never hunted),
+    # pull title/category from Keepa (1 token) so it still reaches keyword
+    # research instead of dead-ending on "not in the product database".
     product = Product.objects.filter(asin=asin).first()
-    if not product:
-        out["error"] = f"ASIN {asin} is not in the product database."
+    if product:
+        title = product.title or ""
+        category = product.category or ""
+        subcategory = product.subcategory or ""
+        source = "db"
+    else:
+        try:
+            from research.services.phase3 import (
+                load_keepa, query_products, extract_keepa_fields)
+            kp = query_products(load_keepa(), [asin], deep=False).get(asin)
+        except Exception as e:  # noqa: BLE001
+            out["error"] = (f"ASIN {asin} is not in the product database, and the "
+                            f"Keepa fallback failed: {e}")
+            return out
+        if not kp:
+            out["error"] = (f"ASIN {asin} is not in the product database, and Keepa "
+                            f"returned no product for it.")
+            return out
+        kf = extract_keepa_fields(kp)
+        title = kf.get("title") or ""
+        category = kf.get("category") or ""
+        subcategory = kf.get("subcategory") or ""
+        source = "keepa"
+
+    if not title:
+        out["error"] = f"No title available for ASIN {asin} — cannot build the keyword profile."
         return out
     out["target_product"] = {
-        "asin": product.asin, "title": product.title or "",
-        "category": product.category or "", "subcategory": product.subcategory or "",
+        "asin": asin, "title": title, "category": category,
+        "subcategory": subcategory, "source": source,
     }
 
     try:
         client = load_client()
         profile = derive_product_profile(
-            client, title=product.title or "",
-            category=product.category or "", subcategory=product.subcategory or "",
+            client, title=title, category=category, subcategory=subcategory,
         )
     except Phase2ApiError as e:
         out["error"] = str(e)

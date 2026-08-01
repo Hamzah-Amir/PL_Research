@@ -139,11 +139,11 @@ Phase 3 takes your target product + the locked keywords from Phase 2, finds your
 
 | You provide | What it is |
 |---|---|
-| ~~Jungle Scout CSV~~ | **No longer needed** — the tool builds this sheet itself. As soon as Claude reads your target product's title in Phase 2, it extracts the main search term and starts generating the sheet in the background (Amazon page 1 + Keepa). By the time Phase 3 needs it, it's ready — no waiting. (You can still paste a real JS file as a fallback.) |
+| ~~Jungle Scout CSV~~ | **No longer needed** — the tool builds this sheet itself. As soon as Claude reads your target product's title in Phase 2, it extracts the main search term and starts generating the sheet in the background (Amazon page 1 + Keepa). By the time Phase 3 needs it, it's ready — no waiting. **If scraping fails** (Amazon block / no working proxy), Phase 3 automatically falls back to a manually-provided JS sheet — `test_file/js-keyword-search.csv` by default, or set `PHASE3_FALLBACK_JS` in `.env` to your own file — and shows an amber note that the fallback was used. |
 | Xray Products exports | One H10 Xray **Products** export per launch keyword (5–6 files) — the "Sponsored" column tells us who advertises on each keyword |
 | Keepa API key | In your `.env` as `KEEPA_API_KEY=...` — the tool pulls Keepa data live, so **no manual Keepa export is needed** |
-| RapidAPI key (FlyBy) | In your `.env` as `RAPIDAPI_KEY=...` — used to pull competitor **reviews** (ALL 1–2★ + top five 4–5★; 3★ ignored). Free tier covers ~2,000 requests/month; a Phase 3 run uses ~10–40 |
-| Amazon session cookie | In your `.env` as `AMAZON_COOKIE=...` — passed to the reviews API to unlock the **full 1–2 star list** (Amazon login-gates it). When it expires the tool says so and falls back to the small public sample — just refresh the cookie from your browser |
+| RapidAPI key (FlyBy) | In your `.env` as `RAPIDAPI_KEY=...` — used to pull competitor **reviews** (ALL 1–2★ + top five 4–5★; 3★ ignored). Free tier covers ~2,000 requests/month; a Phase 3 run uses ~10–40. **If the subscription lapses** the Phase 3 page shows an amber warning and the Top-3 Strengths / Weaknesses / Solutions cells say "Unknown — need user confirmation" — resubscribe to *Real-Time Amazon Data* on rapidapi.com and re-run |
+| Amazon session cookie | In your `.env` as the four split values `AMAZON_SESSION_ID=...`, `AMAZON_UBID_ACBUK=...`, `AMAZON_X_ACBUK=...`, `AMAZON_AT_ACBUK=...` (copy each from your browser's cookie panel for amazon.co.uk; a single full `AMAZON_COOKIE=...` string still works as a fallback). Passed to the reviews API to unlock the **full 1–2 star list** (Amazon login-gates it). When it expires the tool says so and falls back to the small public sample — just refresh the values from your browser |
 
 > The auto-generated sheet covers the **main search term only** (sales numbers are the same regardless of keyword). Xray must be run on **every** launch keyword, because ad presence changes per keyword. Generating the sheet costs about 2 Keepa tokens per product (~100 for a page); re-runs on the same term are cached and free.
 
@@ -156,6 +156,18 @@ Phase 3 takes your target product + the locked keywords from Phase 2, finds your
 5. **Scores each competitor out of 184.** A **higher score = a stronger competitor** (harder to beat). Bands: **0–86 easy to enter · 87–134 mid-challenge · 135–184 difficult.**
 6. **Fills the workbook** — Competitor Analysis (all three blocks), Pricing Analysis (BSR/dimensions/weight; costs left blank until you have supplier quotes), and Sponsored Products (your 6 keywords). Saved to `output/`.
 7. **Decision Gate:** you decide — (A) workable → Phase 4, (B) change competitors, or (C) not workable → back to Phase 1.
+
+# Phase 4 — Critical Sheet
+
+Phase 4 builds the **Critical Sheet** — the full product-data spreadsheet covering the top parent products in your niche **plus every variation** (colours/sizes/pack counts), one row each. It reuses the Jungle Scout universe from Phase 3 and pulls the variation ASINs **live from Keepa** — you don't run or upload any Keepa export.
+
+**How it works (one approval step):**
+
+1. On the Phase 4 page, click **"Propose vocabulary"**. The tool pulls the parents + their variations from Keepa, then Claude proposes a **controlled vocabulary** (Material / Size / Color / Packaging / Special Features) and the **category-specific Design attributes** that decide how products get grouped into Designs (Rule 8).
+2. **You review and edit** the proposed lists in the form (add/remove values, tweak the Design attributes), then click **"Approve & build"**. Nothing is written until you approve.
+3. Claude classifies each parent's **Design code** + attributes (image + text), variations inherit the parent's static attributes but keep their **own** sales/price/rating/BSR/link (never copied from the parent — Rule 7), and the tool writes **`Phase4_CriticalSheet_<ASIN>_<date>.xlsx`** to download. A **Design legend** sits above the header.
+
+> **Output format:** the Critical Sheet is filled into your real **`PES UK.xlsx`** template (the `Critical sheet` tab — same columns, styling, date/keyword cells and Design-legend block). Keep `PES UK.xlsx` in the `test_file/` folder; if you update it, the tool picks up the change automatically on the next run. The current Phase-4 download contains the Critical sheet only (the other PES tabs belong to phases 5–7, which aren't built yet). Anything the tool can't verify shows **"Unknown — need user confirmation"** (Rule 0) — e.g. a variation's monthly sales when Keepa has no estimate for it.
 
 ## What "Unknown" means in the sheet
 

@@ -2,25 +2,34 @@ from pathlib import Path
 
 from django.conf import settings
 from django.http import FileResponse, Http404
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 
 from products.models import Product
 from .services.phase1 import run_query
 from .services.phase2 import run_phase2
 from .services.phase3 import ELEMENTS, build_js_sheet, run_phase3
+from .services.phase4 import COLUMNS as PHASE4_COLUMNS, run_phase4
 
 PER_PAGE = 10
 
 
 def research_dashboard(request):
-
-    categories = Product.objects.values_list('category', flat=True).distinct()
-    return render(request, 'research/dashboard.html', {
-        'categories': categories,
-    })
+    ctx = {'ingest': None}
+    # Optional: add products to the DB from a Black Box Excel upload.
+    if request.method == 'POST' and request.FILES.get('blackbox_file'):
+        from .services.ingest import ingest_products_excel
+        ctx['ingest'] = ingest_products_excel(request.FILES['blackbox_file'])
+    ctx['categories'] = Product.objects.values_list('category', flat=True).distinct()
+    return render(request, 'research/dashboard.html', ctx)
 
 
 def shortlist(request):
+    # Optional direct-ASIN shortcut: if the user supplied an ASIN on the
+    # dashboard, skip the shortlist and jump straight to Phase 2 for it.
+    asin = (request.GET.get('asin') or '').strip().upper()
+    if asin:
+        return redirect('research:select', asin=asin)
+
     budget = request.GET.get('budget', '')
     category = request.GET.get('category', '')
     include_seasonal = request.GET.get('include_seasonal') == '1'
@@ -47,7 +56,10 @@ def select_asin(request, asin):
     product = Product.objects.filter(asin=asin).first()
     ctx = {'asin': asin, 'product': product, 'result': None, 'error': None}
 
-    if product and request.method == 'POST':
+    # Process the upload even when the ASIN isn't in the DB — run_phase2 falls
+    # back to Keepa for the product details (dev use), so a directly-entered
+    # ASIN still reaches keyword research.
+    if request.method == 'POST':
         session_key = f'phase2_xray_{asin}'
         upload = request.FILES.get('xray_file')
 
@@ -116,19 +128,23 @@ def phase3(request, asin):
                     fh.write(chunk)
             saved.append(str(dest))
 
-        # Generate the Jungle Scout sheet from the Phase 2 main search term.
+        # Generate the JS sheet from the Phase 2 term; fall back to a manual JS
+        # sheet if scraping fails (Amazon block / no working proxy).
         try:
-            jsdir = Path(settings.MEDIA_ROOT) / 'phase3_js'
-            jsdir.mkdir(parents=True, exist_ok=True)
-            js = build_js_sheet(keyword=sess['term'], out_path=str(jsdir / f'{asin}.csv'))
-            js_path = js.get('out_path')
-        except Exception as e:  # noqa: BLE001
+            js_path, js_note = _ensure_js_sheet(sess['term'], asin)
+        except RuntimeError as e:
             ctx['error'] = f'Could not generate the Jungle Scout sheet for "{sess["term"]}": {e}'
             return render(request, 'research/phase3.html', ctx)
 
         result = run_phase3(asin, js_file=js_path, xray_files=saved,
                             locked_keywords=sess.get('keywords'))
+        if js_note:
+            result.setdefault('log', []).insert(0, js_note)
         ctx['result'] = result
+        # Data-source failures (reviews API, Keepa, …) are buried in the run
+        # log; surface them so a sheet with 'Unknown' cells isn't a mystery.
+        ctx['warnings'] = [l for l in (result.get('log') or [])
+                           if 'failed' in l.lower() or 'unavailable' in l.lower()]
 
         if result.get('scored'):
             recs = result.get('records', {})
@@ -150,6 +166,90 @@ def phase3(request, asin):
             ctx['pdf_name'] = Path(result['pdf_path']).name
 
     return render(request, 'research/phase3.html', ctx)
+
+
+def _lines(raw):
+    """Split a textarea value into a clean list (one item per non-empty line)."""
+    return [ln.strip() for ln in (raw or '').splitlines() if ln.strip()]
+
+
+def _ensure_js_sheet(term, asin):
+    """Build the Jungle Scout sheet from *term*; if scraping fails (Amazon block
+    / no working proxy) fall back to the manual JS sheet in
+    ``settings.PHASE3_FALLBACK_JS``. Returns ``(js_path, note)`` — *note* is None
+    on success, or a 'used fallback' message. Raises RuntimeError if neither the
+    scrape nor a fallback file is available."""
+    jsdir = Path(settings.MEDIA_ROOT) / 'phase3_js'
+    jsdir.mkdir(parents=True, exist_ok=True)
+    try:
+        js = build_js_sheet(keyword=term, out_path=str(jsdir / f'{asin}.csv'))
+        return js.get('out_path'), None
+    except Exception as e:  # noqa: BLE001
+        fallback = getattr(settings, 'PHASE3_FALLBACK_JS', '') or str(
+            Path(settings.BASE_DIR) / 'test_file' / 'js-keyword-search.csv')
+        if Path(fallback).exists():
+            note = (f'JS-sheet scraping failed ({e}). Using the fallback JS sheet '
+                    f'"{Path(fallback).name}" instead — set up a working proxy to '
+                    f'auto-generate it, or replace the fallback file.')
+            return fallback, note
+        raise RuntimeError(f'{e} (and no fallback JS sheet at {fallback})')
+
+
+def phase4(request, asin):
+    """Phase 4 (Critical Sheet). Two-stage flow adapted from the v9.6 workflow:
+    (1) Claude proposes a controlled vocabulary + Design attributes and the tool
+    pulls the variation universe from Keepa; (2) after the user reviews/edits and
+    approves the vocabulary, Claude classifies each parent and the Critical Sheet
+    workbook is written. The Jungle Scout sheet is regenerated (cached) from the
+    Phase 2 main search term carried in the session."""
+    asin = (asin or '').strip().upper()
+    product = Product.objects.filter(asin=asin).first()
+    sess = request.session.get(f'phase3_{asin}', {})
+    ctx = {
+        'asin': asin, 'product': product, 'term': sess.get('term'),
+        'result': None, 'error': None, 'columns': [h for _k, h in PHASE4_COLUMNS],
+    }
+
+    if not (product and request.method == 'POST'):
+        return render(request, 'research/phase4.html', ctx)
+
+    if not sess.get('term'):
+        ctx['error'] = 'Start from Phase 2/3 first — the main search term is needed to build the Jungle Scout universe.'
+        return render(request, 'research/phase4.html', ctx)
+
+    # The JS sheet is the same one Phase 3 uses; regenerate it (cached → free),
+    # falling back to the manual JS sheet if scraping fails (no working proxy).
+    try:
+        js_path, js_note = _ensure_js_sheet(sess['term'], asin)
+    except RuntimeError as e:
+        ctx['error'] = f'Could not generate the Jungle Scout sheet for "{sess["term"]}": {e}'
+        return render(request, 'research/phase4.html', ctx)
+
+    action = request.POST.get('action', 'propose')
+    approved = None
+    if action == 'build':
+        approved = {
+            'material_values': _lines(request.POST.get('material_values')),
+            'size_guidance': (request.POST.get('size_guidance') or '').strip(),
+            'color_values': _lines(request.POST.get('color_values')),
+            'packaging_values': _lines(request.POST.get('packaging_values')),
+            'special_feature_guidance': (request.POST.get('special_feature_guidance') or '').strip(),
+            'design_attributes': _lines(request.POST.get('design_attributes')),
+        }
+
+    # Xray exports uploaded in Phase 3 feed the H10 Basic Data tab (top 3 keywords).
+    xray_dir = Path(settings.MEDIA_ROOT) / 'phase3_xray' / asin
+    xray_files = str(xray_dir) if xray_dir.exists() else None
+    result = run_phase4(asin, js_file=js_path, keyword=sess['term'], approved=approved,
+                        xray_files=xray_files)
+    if js_note:
+        result.setdefault('log', []).insert(0, js_note)
+    ctx['result'] = result
+    ctx['warnings'] = [l for l in (result.get('log') or [])
+                       if 'failed' in l.lower() or 'unavailable' in l.lower()]
+    if result.get('workbook_path'):
+        ctx['workbook_name'] = Path(result['workbook_path']).name
+    return render(request, 'research/phase4.html', ctx)
 
 
 def download_workbook(request, name):

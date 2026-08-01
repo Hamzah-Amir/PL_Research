@@ -181,6 +181,12 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Phase 3 fallback: when JS-sheet scraping fails (Amazon block / no working
+# proxy), Phase 3 uses this manually-provided Jungle Scout sheet instead.
+# Override via the PHASE3_FALLBACK_JS env var; defaults to the sample file.
+PHASE3_FALLBACK_JS = os.environ.get(
+    "PHASE3_FALLBACK_JS", str(BASE_DIR / "test_file" / "js-keyword-search.csv"))
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
