@@ -3,25 +3,29 @@
 {% block body %}
 <div class="mx-auto max-w-4xl px-4 py-8">
 
-  {# ── Target product header ───────────────────────────────────────────── #}
-  {% if product %}
-    <div class="mb-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <p class="text-xs uppercase tracking-wide text-indigo-600">Phase 2 · Keyword verification</p>
-      <h1 class="mt-1 text-xl font-bold text-slate-800">{{ product.asin }}</h1>
+  {# ── Target product header (DB, else Keepa dev-fallback, else just ASIN) ─ #}
+  <div class="mb-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+    <p class="text-xs uppercase tracking-wide text-indigo-600">Phase 2 · Keyword verification</p>
+    <h1 class="mt-1 text-xl font-bold text-slate-800">{{ asin }}</h1>
+    {% if product %}
       <p class="mt-1 text-slate-700">{{ product.title }}</p>
       <p class="mt-1 text-sm text-slate-500">
         {{ product.category }}{% if product.subcategory %} · {{ product.subcategory }}{% endif %}
       </p>
-    </div>
-  {% else %}
-    <div class="rounded-xl border border-rose-200 bg-rose-50 p-6">
-      <h1 class="text-lg font-bold text-rose-800">ASIN not found</h1>
-      <p class="mt-1 text-rose-700">No product matches “{{ asin }}”.</p>
-      <a href="{% url 'research:research' %}" class="mt-3 inline-block text-sm font-medium text-indigo-600 hover:underline">← Back to filters</a>
-    </div>
-  {% endif %}
+    {% elif result.target_product %}
+      <p class="mt-1 text-slate-700">{{ result.target_product.title }}</p>
+      <p class="mt-1 text-sm text-slate-500">
+        {{ result.target_product.category }}{% if result.target_product.subcategory %} · {{ result.target_product.subcategory }}{% endif %}
+      </p>
+      <p class="mt-1 text-xs text-amber-600">Not in your product database — details pulled from Keepa (dev fallback).</p>
+    {% else %}
+      <p class="mt-1 text-sm text-slate-500">
+        Not in your product database — upload the Xray keyword export to continue; product details are pulled from Keepa (dev fallback).
+      </p>
+    {% endif %}
+  </div>
 
-  {% if product %}
+  {% if asin %}
     {% if error %}
       <div class="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{{ error }}</div>
     {% endif %}

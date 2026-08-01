@@ -36,6 +36,14 @@
         <span class="font-semibold">Phase 3 couldn’t complete:</span> {{ result.error }}
       </div>
     {% endif %}
+    {% if warnings %}
+      <div class="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        <p class="font-semibold">Some data sources failed — affected cells show “Unknown” in the workbook:</p>
+        <ul class="mt-1 list-disc pl-5 space-y-0.5">
+          {% for w in warnings %}<li>{{ w }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
 
     {# Upload the Xray Products exports (JS sheet is auto-generated from the term) #}
     {% if not competitors %}
@@ -81,6 +89,10 @@
                 ↓ Download PDF
               </a>
             {% endif %}
+            <a href="{% url 'research:phase4' asin=asin %}"
+               class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+              Continue to Phase 4 →
+            </a>
           </div>
         </div>
       {% endif %}
