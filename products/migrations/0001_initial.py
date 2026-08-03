@@ -12,6 +12,72 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        # `products` and `product_history` are managed=False (Django never issues
+        # DDL for them) — they were created by the now-removed Phase-1 ingest raw
+        # SQL. Create them here (idempotently) BEFORE the managed tables below,
+        # whose foreign keys reference products(asin), so a fresh database (e.g.
+        # Supabase prod) migrates cleanly. IF NOT EXISTS makes it a no-op where
+        # the tables already exist; reverse is a no-op so rollback never drops
+        # these data-bearing external tables.
+        migrations.RunSQL(
+            sql="""
+            CREATE TABLE IF NOT EXISTS products (
+                asin varchar(20) NOT NULL PRIMARY KEY,
+                title text NULL,
+                brand varchar(255) NULL,
+                category varchar(255) NULL,
+                subcategory varchar(255) NULL,
+                price numeric(12,2) NULL,
+                bsr integer NULL,
+                estimated_sales numeric(14,2) NULL,
+                estimated_revenue numeric(14,2) NULL,
+                review_count integer NULL,
+                rating double precision NULL,
+                weight_kg double precision NULL,
+                yoy_growth double precision NULL,
+                is_seasonal boolean NULL,
+                variation_count integer NULL,
+                has_variants boolean NULL,
+                is_amazon_seller boolean NULL,
+                is_compatibility boolean NULL,
+                is_global_brand boolean NULL,
+                fulfillment varchar(50) NULL,
+                image_url text NULL,
+                url text NULL,
+                listing_age_months double precision NULL,
+                sales_trend_90d double precision NULL,
+                price_trend_90d double precision NULL,
+                price_range varchar(10) NULL,
+                review_bucket varchar(10) NULL,
+                sales_bucket varchar(10) NULL,
+                competition_score double precision NULL,
+                demand_score double precision NULL,
+                opportunity_score double precision NULL,
+                llm_adj double precision NULL,
+                llm_reason text NULL,
+                llm_at timestamptz NULL,
+                created_at timestamptz NOT NULL DEFAULT now(),
+                last_updated timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS idx_products_category ON products (category);
+            CREATE INDEX IF NOT EXISTS idx_products_price_range ON products (price_range);
+            CREATE INDEX IF NOT EXISTS idx_products_opportunity ON products (opportunity_score DESC);
+            CREATE INDEX IF NOT EXISTS idx_products_has_variants ON products (has_variants);
+            CREATE INDEX IF NOT EXISTS idx_products_is_seasonal ON products (is_seasonal);
+
+            CREATE TABLE IF NOT EXISTS product_history (
+                id bigserial NOT NULL PRIMARY KEY,
+                asin varchar(20) NOT NULL,
+                price numeric(12,2) NULL,
+                bsr integer NULL,
+                estimated_sales numeric(14,2) NULL,
+                review_count integer NULL,
+                captured_at timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS idx_history_asin ON product_history (asin);
+            """,
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.CreateModel(
             name='Product',
             fields=[
