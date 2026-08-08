@@ -217,6 +217,36 @@ def phase4(request, asin):
         ctx['error'] = 'Start from Phase 2/3 first — the main search term is needed to build the Jungle Scout universe.'
         return render(request, 'research/phase4.html', ctx)
 
+    action = request.POST.get('action', 'propose')
+
+    # ── Phase 6: fill the KWs tabs into the already-built workbook. Runs AFTER
+    # the Critical Sheet (the top-10 ASINs come from it), so no JS/Keepa/Claude. ─
+    if action == 'cerebro':
+        from .services.phase4 import add_kws_to_workbook
+        wb = request.session.get(f'phase4_workbook_{asin}')
+        up = request.FILES.get('cerebro_file')
+        if not wb or not Path(wb).exists():
+            ctx['error'] = 'Build the Critical Sheet first, then upload the Cerebro export.'
+        elif not up:
+            ctx['error'] = 'Please choose a Cerebro export (.xlsx/.csv) to upload.'
+        else:
+            cdir = Path(settings.MEDIA_ROOT) / 'phase4_cerebro'
+            cdir.mkdir(parents=True, exist_ok=True)
+            cpath = cdir / f'{asin}{Path(up.name).suffix or ".xlsx"}'
+            with open(cpath, 'wb') as fh:
+                for chunk in up.chunks():
+                    fh.write(chunk)
+            log = []
+            try:
+                add_kws_to_workbook(wb, str(cpath), asin, sess.get('keywords'), log=log)
+                ctx['result'] = {'stage': 'cerebro', 'workbook_path': wb, 'log': log,
+                                 'top10_asins': request.session.get(f'phase4_top10_{asin}', [])}
+                ctx['workbook_name'] = Path(wb).name
+                ctx['cerebro_done'] = True
+            except Exception as e:  # noqa: BLE001
+                ctx['error'] = f'Could not fill the KWs tabs from the Cerebro export: {e}'
+        return render(request, 'research/phase4.html', ctx)
+
     # The JS sheet is the same one Phase 3 uses; regenerate it (cached → free),
     # falling back to the manual JS sheet if scraping fails (no working proxy).
     try:
@@ -224,8 +254,6 @@ def phase4(request, asin):
     except RuntimeError as e:
         ctx['error'] = f'Could not generate the Jungle Scout sheet for "{sess["term"]}": {e}'
         return render(request, 'research/phase4.html', ctx)
-
-    action = request.POST.get('action', 'propose')
     approved = None
     if action == 'build':
         approved = {
@@ -240,8 +268,11 @@ def phase4(request, asin):
     # Xray exports uploaded in Phase 3 feed the H10 Basic Data tab (top 3 keywords).
     xray_dir = Path(settings.MEDIA_ROOT) / 'phase3_xray' / asin
     xray_files = str(xray_dir) if xray_dir.exists() else None
+
+    # Build the Critical Sheet (Phase 4/5). Cerebro/KWs (Phase 6) is a SEPARATE
+    # step afterwards — the top-10 ASINs it needs only exist once this is built.
     result = run_phase4(asin, js_file=js_path, keyword=sess['term'], approved=approved,
-                        xray_files=xray_files)
+                        xray_files=xray_files, launch_keywords=sess.get('keywords'))
     if js_note:
         result.setdefault('log', []).insert(0, js_note)
     ctx['result'] = result
@@ -249,6 +280,9 @@ def phase4(request, asin):
                        if 'failed' in l.lower() or 'unavailable' in l.lower()]
     if result.get('workbook_path'):
         ctx['workbook_name'] = Path(result['workbook_path']).name
+        # Persist for the Phase-6 Cerebro step (run Cerebro on these top-10 ASINs).
+        request.session[f'phase4_workbook_{asin}'] = result['workbook_path']
+        request.session[f'phase4_top10_{asin}'] = result.get('top10_asins', [])
     return render(request, 'research/phase4.html', ctx)
 
 

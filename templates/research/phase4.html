@@ -128,6 +128,20 @@
     {% endif %}
 
     {# ── Stage 2: built ───────────────────────────────────────────────────── #}
+    {% if result.stage == 'cerebro' and cerebro_done %}
+      <div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+        <span class="text-sm text-emerald-800">
+          Phase 6 done — KWs Complete/Filtered &amp; Key Evaluation filled from the Cerebro export.
+        </span>
+        {% if workbook_name %}
+          <a href="{% url 'research:download_workbook' name=workbook_name %}"
+             class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+            ↓ Download updated .xlsx
+          </a>
+        {% endif %}
+      </div>
+    {% endif %}
+
     {% if result.stage == 'fill' and result.workbook_path %}
       <div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
         <span class="text-sm text-emerald-800">
@@ -140,6 +154,32 @@
             ↓ Download .xlsx
           </a>
         {% endif %}
+      </div>
+
+      {# ── Phase 6: run Cerebro on these top-10 ASINs, then upload ─────────── #}
+      <div class="mb-6 rounded-xl border border-indigo-200 bg-indigo-50 p-5">
+        <h2 class="text-base font-semibold text-indigo-900">Phase 6 — Keyword tabs (Cerebro)</h2>
+        <p class="mt-1 text-sm text-indigo-800">
+          Run Helium 10 <span class="font-medium">Cerebro</span> on these top‑10 ASINs (all in one session,
+          main ASIN first), export the XLSX, then upload it to fill KWs Complete/Filtered &amp; Key Evaluation.
+        </p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          {% for a in result.top10_asins %}
+            <span class="rounded bg-white px-2 py-0.5 font-mono text-xs text-indigo-700 ring-1 ring-indigo-200">{{ a }}</span>
+          {% endfor %}
+        </div>
+        <form action="{% url 'research:phase4' asin=asin %}" method="post" enctype="multipart/form-data"
+              class="mt-4 flex flex-wrap items-center gap-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="cerebro">
+          <input type="file" name="cerebro_file" accept=".xlsx,.xls,.csv" required
+                 class="text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600
+                        file:px-4 file:py-2 file:text-white hover:file:bg-indigo-700">
+          <button type="submit"
+                  class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700">
+            Fill KWs tabs from Cerebro →
+          </button>
+        </form>
       </div>
 
       {% if result.legend %}

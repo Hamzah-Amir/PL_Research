@@ -42,10 +42,12 @@ from research.services.phase3 import (
     _load_cache,
     _save_cache,
     extract_keepa_fields,
+    filter_same_product_type,
     load_client,
     load_keepa,
     read_js_products,
 )
+from research.services.phase2 import derive_product_profile
 
 UNKNOWN = "Unknown — need user confirmation"
 
@@ -851,6 +853,244 @@ def _h10_cells(xray_by_kw: dict) -> Dict[str, object]:
     return cells
 
 
+def _filter_h10_same_type(client, target_asin, uni, xray_by_kw: dict, log: list) -> dict:
+    """Phase-5 Step 16.1: for each keyword's Xray products, keep only those that
+    are the SAME product type as the target (Claude), before the top-57 pick.
+    Derives the target profile once from its title/category (JS sheet → Xray).
+    Falls back to the unfiltered set if the profile or a filter call fails, so
+    H10 is never left empty."""
+    # Target title/category for the profile: JS sheet first, else any Xray row.
+    tj = uni["js_by_asin"].get(target_asin, {}) if uni else {}
+    title = tj.get("title")
+    category = tj.get("category")
+    if not title:
+        for df in xray_by_kw.values():
+            if {"asin", "title"}.issubset(df.columns):
+                hit = df[df["asin"] == target_asin]
+                if not hit.empty:
+                    title = hit.iloc[0].get("title")
+                    category = category or hit.iloc[0].get("category")
+                    break
+    if not title:
+        log.append("H10 same-type filter skipped — no target title to build a profile from.")
+        return xray_by_kw
+    try:
+        profile = derive_product_profile(client, title=title, category=category or "")
+    except Exception as e:  # noqa: BLE001
+        log.append(f"H10 same-type filter skipped — profile build failed: {e}")
+        return xray_by_kw
+
+    out = {}
+    for kw, df in xray_by_kw.items():
+        if not {"asin", "title"}.issubset(df.columns) or df.empty:
+            out[kw] = df
+            continue
+        try:
+            kept = set(filter_same_product_type(client, profile, df[["asin", "title"]]).same_type_asins)
+            fdf = df[df["asin"].isin(kept)]
+            log.append(f"H10 '{kw}': {len(fdf)}/{len(df)} same product type"
+                       + (f" (only {len(fdf)}<57)" if 0 < len(fdf) < 57 else ""))
+            out[kw] = fdf if not fdf.empty else df  # never blank a section
+        except Exception as e:  # noqa: BLE001
+            log.append(f"H10 '{kw}' same-type filter failed ({e}) — kept all rows.")
+            out[kw] = df
+    return out
+
+
+# ── Phase 6: KWs Complete/Filtered Data from the multi-ASIN Cerebro export ────
+KWS_COMPLETE_SHEET = "KWs Complete Data"
+KWS_FILTERED_SHEET = "KWs Filtered Data"
+KWS_HEADER_ROW = 4
+KWS_DATA_START = 5
+KWS_ASIN_ROW = 3          # ASINs go in G3:P3 (Seller 1..10)
+KWS_SELLER1_COL = 7       # G
+_KWS_MAX_ROWS = 400       # cap KWs Complete Data (keywords) for a sane file size
+# Key Evaluation reuses the same KW matrix (the launch keywords), offset lower:
+# ASIN row 49, headers row 50, data from row 51 (feeds SUMIF/COUNTIF in rows 40-47).
+KEY_EVAL_SHEET = "key Evaluation"
+KEY_EVAL_ASIN_ROW = 49
+KEY_EVAL_DATA_START = 51
+
+
+def add_kws_to_workbook(workbook_path, cerebro_file, target_asin, launch_keywords,
+                        key_eval_images=None, log: Optional[list] = None) -> str:
+    """Phase 6, run AFTER the Critical Sheet (so the top-10 ASINs are known):
+    fill the KWs Complete/Filtered + Key Evaluation tabs of an already-built
+    Phase-4 workbook from a Cerebro export, in place (and, if given, the Key
+    Evaluation G1:P1 product images). Returns the workbook path."""
+    import os
+    import zipfile
+
+    src = Path(workbook_path)
+    if not src.exists():
+        raise Phase3ApiError(f"Phase-4 workbook not found: {workbook_path}")
+    df = _read_cerebro(cerebro_file)
+
+    edits = {}
+    with zipfile.ZipFile(src) as zf:
+        for name, arow, drow, filt in (
+            (KWS_COMPLETE_SHEET, KWS_ASIN_ROW, KWS_DATA_START, False),
+            (KWS_FILTERED_SHEET, KWS_ASIN_ROW, KWS_DATA_START, True),
+            (KEY_EVAL_SHEET, KEY_EVAL_ASIN_ROW, KEY_EVAL_DATA_START, True),
+        ):
+            part = _locate_sheet_part(zf, name, required=False)
+            if not part:
+                continue
+            xml = zf.read(part).decode("utf-8")
+            new_xml, n = _kws_fill_xml(xml, df, target_asin, launch_keywords,
+                                       filtered=filt, asin_row=arow, data_start=drow)
+            if name == KEY_EVAL_SHEET and key_eval_images:
+                new_xml = _upsert_row_cells(new_xml, 1, _key_eval_image_cells(key_eval_images))
+            edits[part] = new_xml
+            if log is not None:
+                log.append(f"{name}: {n} keyword(s).")
+
+    tmp = src.with_suffix(".kwstmp.xlsx")
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename in edits:
+                data = edits[item.filename].encode("utf-8")
+            zout.writestr(item, data)
+    os.replace(tmp, src)  # overwrite the deliverable in place
+    return str(src)
+
+
+def _read_cerebro(path: str):
+    """Read a Helium 10 Cerebro (reverse-ASIN) export; normalise headers."""
+    import pandas as pd
+    p = str(path)
+    df = pd.read_excel(p) if p.lower().endswith((".xlsx", ".xls")) else pd.read_csv(p)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def _cerebro_asin_cols(df) -> List[str]:
+    """The per-ASIN rank columns (headers that are ASINs) in the Cerebro export."""
+    return [c for c in df.columns if _ASIN_RE.match(str(c).strip().upper())]
+
+
+def _rank_num(v):
+    """A rank cell → positive int, else None (dash / blank / non-numeric)."""
+    import pandas as pd
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    try:
+        n = int(round(float(re.sub(r"[^\d.\-]", "", str(v)) or "x")))
+    except (ValueError, TypeError):
+        return None
+    return n if n > 0 else None
+
+
+def _kws_fill_xml(xml: str, df, target_asin: str, launch_keywords, *, filtered: bool,
+                  asin_row: int = KWS_ASIN_ROW, data_start: int = KWS_DATA_START):
+    """Fill one KW-matrix tab: write the 10 ASINs into the seller row (G..P of
+    *asin_row*) and one row per keyword from *data_start* (A=phrase, B=SV,
+    C=competing, D=sponsored ASINs, E=CPS, F=ranking competitors, G=main-ASIN
+    rank [Position (Rank)], H:P=the 9 competitor ASIN ranks). Missing competitor
+    ranks are filled with the CPS value (v9.6 rule). Used for KWs Complete
+    (any ASIN ≤30, top by SV), KWs Filtered and Key Evaluation rows 51+ (both =
+    the approved launch keywords)."""
+    from xml.sax.saxutils import escape
+
+    def col(name, *alts):
+        for c in (name, *alts):
+            if c in df.columns:
+                return c
+        return None
+
+    c_phrase = col("Keyword Phrase", "Keyword")
+    c_sv = col("Search Volume")
+    c_comp = col("Competing Products")
+    c_spon = col("Sponsored ASINs")
+    c_cps = col("Competitor Performance Score")
+    c_rankc = col("Ranking Competitors (count)", "Ranking Competitors")
+    c_pos = col("Position (Rank)")
+    asin_cols = _cerebro_asin_cols(df)[:9]  # up to 9 competitors → H..P
+    if not c_phrase:
+        return xml, 0
+
+    rows = df.to_dict("records")
+    picked = []
+    for r in rows:
+        phrase = str(r.get(c_phrase) or "").strip()
+        if not phrase:
+            continue
+        ranks = [_rank_num(r.get(c_pos))] + [_rank_num(r.get(a)) for a in asin_cols]
+        if not any(x is not None and x <= 30 for x in ranks):
+            continue  # base (KWs Complete): at least one ASIN ranks ≤30
+        if filtered:  # KWs Filtered / Key Eval: keep only Search Volume > 350
+            sv = _rank_num(r.get(c_sv)) if c_sv else None
+            if sv is None or sv <= 350:
+                continue
+        picked.append(r)
+    picked.sort(key=lambda r: _rank_num(r.get(c_sv)) or 0, reverse=True)
+    if not filtered:
+        picked = picked[:_KWS_MAX_ROWS]
+
+    # Seller row (G..P of asin_row) — G=main (target), H..P = competitor ASINs.
+    asin_slots = {KWS_SELLER1_COL: target_asin}
+    for i, a in enumerate(asin_cols):
+        asin_slots[KWS_SELLER1_COL + 1 + i] = a
+    asin_cells = {f"{_col(ci)}{asin_row}":
+                  f'<c r="{_col(ci)}{asin_row}" t="inlineStr"><is><t>{escape(str(a))}</t></is></c>'
+                  for ci, a in asin_slots.items()}
+    xml = _upsert_row_cells(xml, asin_row, asin_cells)
+
+    def cell(ref, v):
+        if v is None:
+            return ""
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return f'<c r="{ref}"><v>{v}</v></c>'
+        return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{escape(str(v))}</t></is></c>'
+
+    rowmap = {}   # rownum -> populated cell XML (replaces the template's empty row)
+    for i, r in enumerate(picked):
+        rr = data_start + i
+        cps = str(r.get(c_cps)).strip() if c_cps and r.get(c_cps) is not None else None
+        vals = {
+            1: str(r.get(c_phrase)).strip(),
+            2: _rank_num(r.get(c_sv)) if c_sv else None,
+            3: _rank_num(r.get(c_comp)) if c_comp else None,
+            4: _rank_num(r.get(c_spon)) if c_spon else None,
+            5: cps,
+            6: _rank_num(r.get(c_rankc)) if c_rankc else None,
+            7: _rank_num(r.get(c_pos)) if c_pos else None,  # G = main ASIN rank
+        }
+        for j, a in enumerate(asin_cols):  # H..P competitor ranks (else CPS string)
+            rk = _rank_num(r.get(a))
+            vals[KWS_SELLER1_COL + 1 + j] = rk if rk is not None else cps
+        if vals[7] is None:
+            vals[7] = cps
+        rowmap[rr] = "".join(cell(f"{_col(ci)}{rr}", v) for ci, v in sorted(vals.items()) if v is not None)
+
+    xml = _populate_rows(xml, rowmap)
+    return xml, len(picked)
+
+
+def _key_eval_image_cells(image_urls) -> Dict[str, str]:
+    """`=IMAGE(url)` cells for Key Evaluation G1:P1 — one product image per
+    top-10 ASIN column (rendered by Excel 365 / Google Sheets)."""
+    from xml.sax.saxutils import escape
+    cells = {}
+    for i, url in enumerate((image_urls or [])[:10]):
+        if not url:
+            continue
+        ref = f"{_col(KWS_SELLER1_COL + i)}1"  # G1..P1
+        cells[ref] = f'<c r="{ref}"><f>IMAGE("{escape(str(url))}",1)</f></c>'
+    return cells
+
+
+def _populate_rows(xml: str, rowmap: Dict[int, str]) -> str:
+    """Replace the *content* of each existing ``<row r="N">`` whose number is in
+    *rowmap* with the given cell XML (the KWs template pre-defines thousands of
+    empty rows — we fill them in place rather than inserting duplicates)."""
+    def repl(m):
+        rn = int(m.group("r"))
+        return f'<row r="{rn}">{rowmap[rn]}</row>' if rn in rowmap else m.group(0)
+    return re.sub(r'<row r="(?P<r>\d+)"[^>]*?(?:/>|>.*?</row>)', repl, xml, flags=re.S)
+
+
 def _patch_full_calc(wbxml: str) -> str:
     """Force Excel to recalculate on open so the PES formulas (Margin Calc,
     Price Analysis, …) that reference the Critical sheet pick up the new data."""
@@ -868,6 +1108,7 @@ def write_critical_sheet(rows: List[dict], legend: List[dict], *, target_asin: s
                          keyword: Optional[str], vocab: dict,
                          design_attributes: Optional[List[str]] = None,
                          xray_by_kw: Optional[dict] = None,
+                         cerebro_df=None, launch_keywords=None, key_eval_images=None,
                          log: Optional[list] = None) -> str:
     """Ship a COPY of the full PES workbook with the 'Critical sheet' tab filled
     (and, when *xray_by_kw* is given, the 'H10 basic data' tab from the Phase-3
@@ -892,6 +1133,16 @@ def write_critical_sheet(rows: List[dict], legend: List[dict], *, target_asin: s
         top_xml = zf.read(top_part).decode("utf-8") if top_part else None
         h10_part = _locate_sheet_part(zf, H10_SHEET, required=False) if xray_by_kw else None
         h10_xml = zf.read(h10_part).decode("utf-8") if h10_part else None
+        kc_part = kf_part = ke_part = None
+        kc_xml = kf_xml = ke_xml = None
+        if cerebro_df is not None:
+            kc_part = _locate_sheet_part(zf, KWS_COMPLETE_SHEET, required=False)
+            kc_xml = zf.read(kc_part).decode("utf-8") if kc_part else None
+            kf_part = _locate_sheet_part(zf, KWS_FILTERED_SHEET, required=False)
+            kf_xml = zf.read(kf_part).decode("utf-8") if kf_part else None
+        if cerebro_df is not None or key_eval_images:
+            ke_part = _locate_sheet_part(zf, KEY_EVAL_SHEET, required=False)
+            ke_xml = zf.read(ke_part).decode("utf-8") if ke_part else None
 
     # Build the set of cell writes (ref -> value) + clears (blank scratch).
     cells: Dict[str, object] = {
@@ -931,6 +1182,30 @@ def write_critical_sheet(rows: List[dict], legend: List[dict], *, target_asin: s
     if h10_xml is not None:
         new_h10_xml = _fill_sheet_xml(h10_xml, _h10_cells(xray_by_kw), set())
 
+    # KWs Complete / Filtered Data — from the multi-ASIN Cerebro export (Phase 6).
+    new_kc_xml = new_kf_xml = new_ke_xml = None
+    if cerebro_df is not None:
+        if kc_xml is not None:
+            new_kc_xml, nkc = _kws_fill_xml(kc_xml, cerebro_df, target_asin, launch_keywords, filtered=False)
+            if log is not None:
+                log.append(f"KWs Complete Data: {nkc} keywords (any ASIN rank ≤30).")
+        if kf_xml is not None:
+            new_kf_xml, nkf = _kws_fill_xml(kf_xml, cerebro_df, target_asin, launch_keywords, filtered=True)
+            if log is not None:
+                log.append(f"KWs Filtered Data: {nkf} keyword(s) (SV > 350).")
+    if ke_xml is not None:
+        new_ke_xml = ke_xml
+        if cerebro_df is not None:
+            new_ke_xml, nke = _kws_fill_xml(new_ke_xml, cerebro_df, target_asin, launch_keywords,
+                                            filtered=True, asin_row=KEY_EVAL_ASIN_ROW,
+                                            data_start=KEY_EVAL_DATA_START)
+            if log is not None:
+                log.append(f"Key Evaluation rows 51+: {nke} keyword(s) (SV > 350).")
+        if key_eval_images:
+            new_ke_xml = _upsert_row_cells(new_ke_xml, 1, _key_eval_image_cells(key_eval_images))
+            if log is not None:
+                log.append(f"Key Evaluation images: {sum(1 for u in key_eval_images if u)} in G1:P1.")
+
     _OUT_DIR.mkdir(parents=True, exist_ok=True)
     ts = date.today().strftime("%Y%m%d")
     dest = _OUT_DIR / f"Phase4_CriticalSheet_{target_asin}_{ts}.xlsx"
@@ -945,6 +1220,12 @@ def write_critical_sheet(rows: List[dict], legend: List[dict], *, target_asin: s
         edited[top_part] = new_top_xml
     if h10_part and new_h10_xml:
         edited[h10_part] = new_h10_xml
+    if kc_part and new_kc_xml:
+        edited[kc_part] = new_kc_xml
+    if kf_part and new_kf_xml:
+        edited[kf_part] = new_kf_xml
+    if ke_part and new_ke_xml:
+        edited[ke_part] = new_ke_xml
 
     # Rebuild the workbook: copy every part verbatim except the edited worksheets
     # and workbook.xml (force recalc). Charts/pivots/formulas untouched.
@@ -1035,7 +1316,8 @@ def _load_universe(js_file: str, parent_limit: int, log: list,
 
 
 def run_phase4(target_asin, js_file=None, *, keyword=None, approved=None,
-               parent_limit=DEFAULT_PARENT_LIMIT, max_asins=None, xray_files=None):
+               parent_limit=DEFAULT_PARENT_LIMIT, max_asins=None, xray_files=None,
+               cerebro_file=None, launch_keywords=None):
     """Run Phase 4. Two stages:
 
     - ``approved is None`` → stage 'propose': Keepa-pull the universe and return
@@ -1053,7 +1335,7 @@ def run_phase4(target_asin, js_file=None, *, keyword=None, approved=None,
         "target_asin": (target_asin or "").strip().upper(), "keyword": keyword,
         "stage": "propose" if approved is None else "fill",
         "vocabulary": None, "variation_summary": None, "rows": [], "row_count": 0,
-        "parent_count": 0, "variation_count": 0, "legend": [],
+        "parent_count": 0, "variation_count": 0, "legend": [], "top10_asins": [],
         "workbook_path": None, "log": log, "error": None,
     }
     asin = out["target_asin"]
@@ -1139,19 +1421,42 @@ def run_phase4(target_asin, js_file=None, *, keyword=None, approved=None,
               reverse=True)
 
     # H10 Basic Data from the Phase-3 Xray exports (top 3 keywords), if provided.
+    # Phase 5: keep only same-product-type products per keyword before top-57.
     xray_by_kw = None
     if xray_files:
         try:
             xray_by_kw = _build_per_kw(xray_files)
         except Exception as e:  # noqa: BLE001
             log.append(f"H10 Basic Data skipped — could not read Xray exports: {e}")
+        if xray_by_kw:
+            xray_by_kw = _filter_h10_same_type(client, asin, uni, xray_by_kw, log)
+
+    # Cerebro export (Phase 6) → KWs Complete / Filtered Data.
+    cerebro_df = None
+    if cerebro_file:
+        try:
+            cerebro_df = _read_cerebro(cerebro_file)
+        except Exception as e:  # noqa: BLE001
+            log.append(f"KWs tabs skipped — could not read Cerebro export: {e}")
 
     out["row_count"] = len(rows)
+    out["top10_asins"] = parents[:10]  # Cerebro-ready list for Phase 6
     out["rows"] = rows[:60]  # preview cap for the web view
+
+    # Key Evaluation G1:P1 images — first Keepa image per top-10 row (sorted order).
+    img_by_asin = {}
+    for src in (uni.get("pfields", {}), uni.get("cfields", {})):
+        for a, f in src.items():
+            u = (f.get("image_urls") or [None])[0]
+            if u:
+                img_by_asin[a] = u
+    key_eval_images = [img_by_asin.get(str(r.get("asin"))) for r in rows[:10]]
     try:
         out["workbook_path"] = write_critical_sheet(
             rows, classified["legend"], target_asin=asin, keyword=keyword, vocab=approved,
-            design_attributes=approved.get("design_attributes"), xray_by_kw=xray_by_kw, log=log)
+            design_attributes=approved.get("design_attributes"), xray_by_kw=xray_by_kw,
+            cerebro_df=cerebro_df, launch_keywords=launch_keywords,
+            key_eval_images=key_eval_images, log=log)
         log.append(f"Critical Sheet written: {len(rows)} rows "
                    f"({len(parents)} parents + {len(rows) - len(parents)} variations)"
                    + (f"; H10 Basic Data filled from {len(list(xray_by_kw)[:3])} keyword(s)"

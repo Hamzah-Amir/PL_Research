@@ -47,11 +47,13 @@ def main():
     ap.add_argument("--limit", type=int, default=5, help="parents to classify")
     ap.add_argument("--max-asins", type=int, default=3,
                     help="TOTAL ASIN cap for testing (parents+variations); 0 = no cap")
+    ap.add_argument("--cerebro", default="test_file/cerebro.xlsx", help="Cerebro export -> KWs tabs")
     ap.add_argument("--xray", default="test_file/xray-products",
                     help="folder of Helium 10 Xray exports -> H10 Basic Data tab")
     args = ap.parse_args()
     max_asins = args.max_asins or None
     xray = args.xray if args.xray and os.path.isdir(args.xray) else None
+    cerebro = args.cerebro if args.cerebro and os.path.exists(args.cerebro) else None
 
     if not os.path.exists(args.js):
         print(f"JS sheet not found: {args.js}")
@@ -84,7 +86,8 @@ def main():
         "design_attributes": v["design_attributes"],
     }
     r2 = run_phase4(asin, js_file=args.js, keyword=args.keyword, approved=approved,
-                    parent_limit=args.limit, max_asins=max_asins, xray_files=xray)
+                    parent_limit=args.limit, max_asins=max_asins, xray_files=xray,
+                    cerebro_file=cerebro, launch_keywords=["tent pegs","metal tent pegs","ground stakes","net pegs","awning pegs","camping pegs metal"])
     if r2.get("error"):
         print("\nFILL ERROR:", r2["error"])
         sys.exit(1)
