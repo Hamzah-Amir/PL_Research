@@ -40,25 +40,51 @@
       </div>
     {% endif %}
 
-    {# ── Step 0: kick off the vocabulary proposal ─────────────────────────── #}
+    {# ── Step 0: upload the Keepa export, then kick off the vocabulary proposal ─ #}
     {% if not result %}
       <div class="mb-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 class="text-base font-semibold text-slate-800">Build the Critical Sheet</h2>
         <p class="mt-1 text-sm text-slate-500">
-          The tool pulls the parent products (from the auto-generated Jungle Scout universe) and
-          their variation ASINs live from Keepa, then Claude proposes a controlled vocabulary and
-          category-specific <span class="font-medium">Design attributes</span> for you to approve
-          (Rule 8). Nothing is written until you approve.
+          The tool reads the product &amp; variation data from your uploaded <span class="font-medium">Keepa export</span>,
+          then Claude proposes a controlled vocabulary and category-specific
+          <span class="font-medium">Design attributes</span> for you to approve (Rule 8).
+          Nothing is written until you approve.
         </p>
-        <form action="{% url 'research:phase4' asin=asin %}" method="post" class="mt-4">
+
+        {# How to get the Keepa file (no API) #}
+        <details class="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900" open>
+          <summary class="cursor-pointer select-none font-semibold text-sky-900">
+            How to get the Keepa file (no API needed)
+          </summary>
+          <ol class="mt-2 list-decimal space-y-1 pl-5 text-sky-800">
+            <li>Sign in at <span class="font-medium">keepa.com</span> (a Data subscription is needed to export).</li>
+            <li>Open <span class="font-medium">Product Finder</span> (or <span class="font-medium">Category Tree</span>)
+              and filter to your product’s niche/category on <span class="font-medium">Amazon.co.uk</span>.</li>
+            <li>Add these columns before exporting: <span class="font-medium">ASIN, Title, Brand, Buy&nbsp;Box (Current / Lowest /
+              Highest / 90-day avg), Sales&nbsp;Rank, Reviews Rating, Review Count, Bought in past month,
+              Categories (Root/Sub/Tree), Color, Size, Variation ASINs, Package dimensions &amp; weight, Features/Description.</span></li>
+            <li>Click <span class="font-medium">Export → CSV/XLSX</span> and download the file.</li>
+            <li>Upload it below. The tool matches rows by ASIN; any product not in the file is marked
+              <span class="font-medium">“Unknown”</span> (Rule 0). Variation ASINs missing from the file can be added by
+              running a Keepa lookup on them and re-uploading a combined export.</li>
+          </ol>
+        </details>
+
+        <form action="{% url 'research:phase4' asin=asin %}" method="post" enctype="multipart/form-data" class="mt-4">
           {% csrf_token %}
           <input type="hidden" name="action" value="propose">
-          <button type="submit"
-                  class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700">
-            Propose vocabulary →
-          </button>
+          <label class="block text-sm font-semibold text-slate-800">Keepa export <span class="font-normal text-slate-400">(.xlsx / .csv)</span></label>
+          <input type="file" name="keepa_file" accept=".xlsx,.xls,.csv" required
+                 class="mt-1 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700
+                        file:px-4 file:py-2 file:text-white hover:file:bg-slate-800">
+          <div class="mt-4">
+            <button type="submit"
+                    class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+              Upload Keepa &amp; propose vocabulary →
+            </button>
+          </div>
         </form>
-        <p class="mt-2 text-xs text-slate-400">This runs Keepa (parents + variations) + Claude — it can take a minute.</p>
+        <p class="mt-2 text-xs text-slate-400">Reads your Keepa export + runs Claude — it can take a minute.</p>
       </div>
     {% endif %}
 
@@ -70,10 +96,18 @@
         Review Claude’s proposed vocabulary below, edit anything, then build.
       </div>
 
-      <form action="{% url 'research:phase4' asin=asin %}" method="post"
+      <form action="{% url 'research:phase4' asin=asin %}" method="post" enctype="multipart/form-data"
             class="mb-6 space-y-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         {% csrf_token %}
         <input type="hidden" name="action" value="build">
+
+        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <label class="block text-xs font-semibold text-slate-700">Keepa export
+            <span class="font-normal text-slate-400">— already uploaded; replace only to add variation ASINs or newer data</span></label>
+          <input type="file" name="keepa_file" accept=".xlsx,.xls,.csv"
+                 class="mt-1 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-600
+                        file:px-3 file:py-1.5 file:text-white hover:file:bg-slate-700">
+        </div>
 
         <div>
           <label class="block text-sm font-semibold text-slate-800">Design distinguishing attributes

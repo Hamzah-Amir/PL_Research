@@ -187,6 +187,11 @@ MEDIA_ROOT = BASE_DIR / 'media'
 PHASE3_FALLBACK_JS = os.environ.get(
     "PHASE3_FALLBACK_JS", str(BASE_DIR / "test_file" / "js-keyword-search.csv"))
 
+# Phase 4 Keepa source. The default (no-API) path expects the user to upload a
+# Keepa website export; the live Keepa API code is retained but only used when
+# this flag is on (set PHASE4_USE_KEEPA_API=1 for dev/live-API runs).
+PHASE4_USE_KEEPA_API = os.environ.get("PHASE4_USE_KEEPA_API", "").lower() in ("1", "true", "yes")
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 

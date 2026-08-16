@@ -1255,7 +1255,7 @@ def write_critical_sheet(rows: List[dict], legend: List[dict], *, target_asin: s
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _load_universe(js_file: str, parent_limit: int, log: list,
-                   max_asins: Optional[int] = None):
+                   max_asins: Optional[int] = None, keepa_file: Optional[str] = None):
     """Read the JS sheet, pick the top parents by monthly sales, Keepa-pull them
     and their variation children, and return everything the propose/fill stages
     share. *max_asins* (testing only) caps the TOTAL ASINs (parents + variations)
@@ -1275,12 +1275,27 @@ def _load_universe(js_file: str, parent_limit: int, log: list,
                                            for k, v in r.items()}
                   for _, r in df.iterrows() if _ASIN_RE.match(str(r.get("asin") or ""))}
 
-    api = load_keepa()
-    pprods = keepa_full_query(api, parents)
-    log.append(f"Keepa: {len(pprods)}/{len(parents)} parents (tokens left: {api.tokens_left})")
-    pfields = {a: extract_keepa_fields(pprods[a]) for a in parents if a in pprods}
-
+    # ── Keepa source: uploaded export file (no-API path) OR the live Keepa API.
+    # The file path is preferred when supplied; the API branch is left intact but
+    # only runs when no file is given (see run_phase4 / the Phase-4 view). ──────
     parent_set = set(parents)
+    recs: Dict[str, dict] = {}
+    api = None
+    if keepa_file:
+        from .keepa_file import read_keepa_export, keepa_file_fields, keepa_file_full
+        recs = read_keepa_export(keepa_file)
+        pfields = {a: keepa_file_fields(recs[a], recs) for a in parents if a in recs}
+        pfull = {a: keepa_file_full(recs[a]) for a in parents if a in recs}
+        miss_p = [a for a in parents if a not in recs]
+        log.append(f"Keepa file: {len(pfields)}/{len(parents)} parents matched"
+                   + (f" — {len(miss_p)} not in the file → those cells show Unknown" if miss_p else ""))
+    else:
+        api = load_keepa()
+        pprods = keepa_full_query(api, parents)
+        log.append(f"Keepa API: {len(pprods)}/{len(parents)} parents (tokens left: {api.tokens_left})")
+        pfields = {a: extract_keepa_fields(pprods[a]) for a in parents if a in pprods}
+        pfull = {a: _keepa_full(pprods[a]) for a in parents if a in pprods}
+
     children_map: Dict[str, List[dict]] = {}
     for a in parents:
         children_map[a] = _variation_children(pfields.get(a, {}), exclude=parent_set)
@@ -1297,16 +1312,24 @@ def _load_universe(js_file: str, parent_limit: int, log: list,
         children_map = {a: [k for k in children_map.get(a, []) if k["asin"] in keep]
                         for a in parents}
 
-    pfull = {a: _keepa_full(pprods[a]) for a in parents if a in pprods}
     all_children = [k["asin"] for a in parents for k in children_map[a]]
 
-    cprods = {}
-    if all_children:
-        cprods = keepa_full_query(api, all_children)
-        log.append(f"Keepa: {len(cprods)}/{len(all_children)} variation children "
-                   f"(tokens left: {api.tokens_left})")
-    cfields = {a: extract_keepa_fields(p) for a, p in cprods.items()}
-    cfull = {a: _keepa_full(p) for a, p in cprods.items()}
+    if keepa_file:
+        cfields = {ca: keepa_file_fields(recs[ca], recs) for ca in all_children if ca in recs}
+        cfull = {ca: keepa_file_full(recs[ca]) for ca in all_children if ca in recs}
+        if all_children:
+            miss_c = [ca for ca in all_children if ca not in recs]
+            log.append(f"Keepa file: {len(cfields)}/{len(all_children)} variation children matched"
+                       + (f" — {len(miss_c)} variation ASINs are not in the file (run a Keepa "
+                          f"lookup on them and re-upload a combined export to fill them)" if miss_c else ""))
+    else:
+        cprods = {}
+        if all_children:
+            cprods = keepa_full_query(api, all_children)
+            log.append(f"Keepa API: {len(cprods)}/{len(all_children)} variation children "
+                       f"(tokens left: {api.tokens_left})")
+        cfields = {a: extract_keepa_fields(p) for a, p in cprods.items()}
+        cfull = {a: _keepa_full(p) for a, p in cprods.items()}
 
     return {
         "parents": parents, "js_by_asin": js_by_asin,
@@ -1317,7 +1340,7 @@ def _load_universe(js_file: str, parent_limit: int, log: list,
 
 def run_phase4(target_asin, js_file=None, *, keyword=None, approved=None,
                parent_limit=DEFAULT_PARENT_LIMIT, max_asins=None, xray_files=None,
-               cerebro_file=None, launch_keywords=None):
+               cerebro_file=None, launch_keywords=None, keepa_file=None):
     """Run Phase 4. Two stages:
 
     - ``approved is None`` → stage 'propose': Keepa-pull the universe and return
@@ -1347,7 +1370,8 @@ def run_phase4(target_asin, js_file=None, *, keyword=None, approved=None,
         return out
 
     try:
-        uni = _load_universe(js_file, parent_limit, log, max_asins=max_asins)
+        uni = _load_universe(js_file, parent_limit, log, max_asins=max_asins,
+                             keepa_file=keepa_file)
     except (Phase3KeepaError, Phase3ApiError, FileNotFoundError, ValueError) as e:
         out["error"] = str(e)
         return out

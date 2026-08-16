@@ -247,6 +247,28 @@ def phase4(request, asin):
                 ctx['error'] = f'Could not fill the KWs tabs from the Cerebro export: {e}'
         return render(request, 'research/phase4.html', ctx)
 
+    # ── Keepa source: no-API path. The user uploads a Keepa website export; we
+    # persist it (propose + build are two separate POSTs) and reuse it. The live
+    # Keepa API is only used when settings.PHASE4_USE_KEEPA_API is on. ──────────
+    keepa_path = request.session.get(f'phase4_keepa_{asin}')
+    up_keepa = request.FILES.get('keepa_file')
+    if up_keepa:
+        kdir = Path(settings.MEDIA_ROOT) / 'phase4_keepa'
+        kdir.mkdir(parents=True, exist_ok=True)
+        keepa_path = str(kdir / f'{asin}{Path(up_keepa.name).suffix or ".xlsx"}')
+        with open(keepa_path, 'wb') as fh:
+            for chunk in up_keepa.chunks():
+                fh.write(chunk)
+        request.session[f'phase4_keepa_{asin}'] = keepa_path
+    if not (keepa_path and Path(keepa_path).exists()):
+        keepa_path = None
+        request.session.pop(f'phase4_keepa_{asin}', None)
+    if not keepa_path and not getattr(settings, 'PHASE4_USE_KEEPA_API', False):
+        ctx['error'] = ('Upload a Keepa export first — the Critical Sheet needs Keepa product '
+                        'data. See "How to get the Keepa file" below. (Developers can set '
+                        'PHASE4_USE_KEEPA_API=1 to use the live Keepa API instead.)')
+        return render(request, 'research/phase4.html', ctx)
+
     # The JS sheet is the same one Phase 3 uses; regenerate it (cached → free),
     # falling back to the manual JS sheet if scraping fails (no working proxy).
     try:
@@ -272,7 +294,8 @@ def phase4(request, asin):
     # Build the Critical Sheet (Phase 4/5). Cerebro/KWs (Phase 6) is a SEPARATE
     # step afterwards — the top-10 ASINs it needs only exist once this is built.
     result = run_phase4(asin, js_file=js_path, keyword=sess['term'], approved=approved,
-                        xray_files=xray_files, launch_keywords=sess.get('keywords'))
+                        xray_files=xray_files, launch_keywords=sess.get('keywords'),
+                        keepa_file=keepa_path)
     if js_note:
         result.setdefault('log', []).insert(0, js_note)
     ctx['result'] = result
