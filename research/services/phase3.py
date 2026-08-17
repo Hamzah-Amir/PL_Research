@@ -2883,7 +2883,8 @@ def _build_per_kw(xray_files):
 
 def run_phase3(target_asin, js_file=None, xray_files=None, *, locked_keywords=None,
                js_autogen=None, blackbox_df=None, template=DEFAULT_TEMPLATE,
-               deep=True, deep_limit=None, reviews_by_asin=None, write_workbook=True):
+               deep=True, deep_limit=None, reviews_by_asin=None, write_workbook=True,
+               keepa_file=None):
     """Run Phase 3 (competitor identification + analysis) for one target ASIN and
     return data. Inputs are passed in (no prompts): the auto-generated/uploaded
     Jungle Scout sheet (`js_file` path, or join an in-flight `js_autogen` job from
@@ -2968,20 +2969,39 @@ def run_phase3(target_asin, js_file=None, xray_files=None, *, locked_keywords=No
     top_asins = list(top["asin"])
     records_by_asin = {r["asin"]: dict(r) for _, r in top.iterrows()}
 
-    # Step 10A — Keepa deep pull (final 3 only).
-    try:
-        api = load_keepa()
-        products = query_products(api, top_asins, deep=deep, limit=deep_limit)
-        log.append(f"Keepa returned {len(products)} of {len(top_asins)} (tokens left: {api.tokens_left})")
-        for a in top_asins:
-            if a in products:
-                f = extract_keepa_fields(products[a])
-                if f.get("buybox_seller_id"):
-                    f["seller_feedback"] = get_seller_feedback(api, f["buybox_seller_id"])
-                records_by_asin[a].update({k: v for k, v in f.items()
-                                           if v is not None or k in ("a_plus", "has_video", "seller_feedback")})
-    except Phase3KeepaError as e:
-        log.append(f"Keepa unavailable: {e} (variations/A+/seller-feedback Unknown).")
+    # Step 10A — Keepa deep pull (final 3 only). Source: an uploaded Keepa export
+    # (no-API path) when provided, else the live Keepa API (unchanged). A+/video/
+    # seller-feedback aren't in an export → left Unknown (Rule 0).
+    if keepa_file:
+        try:
+            from .keepa_file import read_keepa_export, keepa_file_fields
+            recs = read_keepa_export(keepa_file)
+            hit = 0
+            for a in top_asins:
+                if a in recs:
+                    hit += 1
+                    f = keepa_file_fields(recs[a], recs)
+                    records_by_asin[a].update({k: v for k, v in f.items()
+                                               if v is not None or k in ("a_plus", "has_video", "seller_feedback")})
+            miss = [a for a in top_asins if a not in recs]
+            log.append(f"Keepa file: {hit}/{len(top_asins)} competitors matched"
+                       + (f" — {miss} not in the file → those fields Unknown" if miss else ""))
+        except Exception as e:  # noqa: BLE001
+            log.append(f"Keepa file could not be read: {e} (competitor Keepa fields Unknown).")
+    else:
+        try:
+            api = load_keepa()
+            products = query_products(api, top_asins, deep=deep, limit=deep_limit)
+            log.append(f"Keepa API returned {len(products)} of {len(top_asins)} (tokens left: {api.tokens_left})")
+            for a in top_asins:
+                if a in products:
+                    f = extract_keepa_fields(products[a])
+                    if f.get("buybox_seller_id"):
+                        f["seller_feedback"] = get_seller_feedback(api, f["buybox_seller_id"])
+                    records_by_asin[a].update({k: v for k, v in f.items()
+                                               if v is not None or k in ("a_plus", "has_video", "seller_feedback")})
+        except Phase3KeepaError as e:
+            log.append(f"Keepa unavailable: {e} (variations/A+/seller-feedback Unknown).")
 
     # Step 10C — Claude listing scoring + reviews, then the rubric.
     pool_stats = pool_statistics(same_type)

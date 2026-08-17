@@ -1,0 +1,19 @@
+{# Reusable "how to get the Keepa export" guidance (no API). Include with:
+   {% include 'research/_keepa_help.html' %}  #}
+<details class="mt-4 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+  <summary class="cursor-pointer select-none font-semibold text-sky-900">
+    How to get the Keepa file (no API needed)
+  </summary>
+  <ol class="mt-2 list-decimal space-y-1 pl-5 text-sky-800">
+    <li>Sign in at <span class="font-medium">keepa.com</span> (a Data subscription is needed to export).</li>
+    <li>Open <span class="font-medium">Product Finder</span> (or <span class="font-medium">Category Tree</span>)
+      and filter to your product’s niche/category on <span class="font-medium">Amazon.co.uk</span>.</li>
+    <li>Add these columns before exporting: <span class="font-medium">ASIN, Title, Brand, Buy&nbsp;Box (Current / Lowest /
+      Highest / 90-day avg), Sales&nbsp;Rank, Reviews Rating, Review Count, Bought in past month,
+      Categories (Root/Sub/Tree), Color, Size, Variation ASINs, Package dimensions &amp; weight, Features/Description.</span></li>
+    <li>Click <span class="font-medium">Export → CSV/XLSX</span> and download the file.</li>
+    <li>Upload it below. Rows are matched by ASIN; any product not in the file is marked
+      <span class="font-medium">“Unknown”</span> (Rule 0). Missing variation ASINs can be added by running a Keepa
+      lookup on them and re-uploading a combined export.</li>
+  </ol>
+</details>

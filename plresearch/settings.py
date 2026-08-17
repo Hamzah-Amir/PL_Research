@@ -187,10 +187,14 @@ MEDIA_ROOT = BASE_DIR / 'media'
 PHASE3_FALLBACK_JS = os.environ.get(
     "PHASE3_FALLBACK_JS", str(BASE_DIR / "test_file" / "js-keyword-search.csv"))
 
-# Phase 4 Keepa source. The default (no-API) path expects the user to upload a
-# Keepa website export; the live Keepa API code is retained but only used when
-# this flag is on (set PHASE4_USE_KEEPA_API=1 for dev/live-API runs).
-PHASE4_USE_KEEPA_API = os.environ.get("PHASE4_USE_KEEPA_API", "").lower() in ("1", "true", "yes")
+# Keepa source (all phases: Phase 3 competitor pull, Phase 4 Critical Sheet,
+# Phase 2 not-in-DB fallback). The default (no-API) path expects the user to
+# upload a Keepa website export; the live Keepa API code is retained but only
+# used when this flag is on. Set USE_KEEPA_API=1 (legacy: PHASE4_USE_KEEPA_API=1)
+# for dev/live-API runs. JS-sheet generation is unaffected — it keeps scraping.
+USE_KEEPA_API = os.environ.get(
+    "USE_KEEPA_API", os.environ.get("PHASE4_USE_KEEPA_API", "")).lower() in ("1", "true", "yes")
+PHASE4_USE_KEEPA_API = USE_KEEPA_API  # back-compat alias
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

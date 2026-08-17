@@ -50,23 +50,38 @@
       <div class="mb-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 class="text-base font-semibold text-slate-800">Upload Xray Products exports</h2>
         <p class="mt-1 text-sm text-slate-500">
-          Upload one Helium 10 <span class="font-medium">Xray Products</span> export per launch keyword (.xlsx).
+          Upload one Helium 10 <span class="font-medium">Xray Products</span> export per launch keyword (.xlsx),
+          plus a <span class="font-medium">Keepa export</span> covering the competitor ASINs.
           The Jungle Scout sheet is generated automatically from the main search term
           “<span class="font-medium">{{ term }}</span>”.
         </p>
+
+        {% include 'research/_keepa_help.html' %}
+
         <form action="{% url 'research:phase3' asin=asin %}" method="post" enctype="multipart/form-data"
-              class="mt-4 flex flex-wrap items-center gap-3">
+              class="mt-4 space-y-4">
           {% csrf_token %}
-          <input type="file" name="xray_files" accept=".xlsx,.xls,.csv" multiple required
-                 class="text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600
-                        file:px-4 file:py-2 file:text-white hover:file:bg-indigo-700">
+          <div>
+            <label class="block text-sm font-semibold text-slate-800">Xray Products exports
+              <span class="font-normal text-slate-400">(one per launch keyword, .xlsx / .csv)</span></label>
+            <input type="file" name="xray_files" accept=".xlsx,.xls,.csv" multiple required
+                   class="mt-1 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600
+                          file:px-4 file:py-2 file:text-white hover:file:bg-indigo-700">
+          </div>
+          <div>
+            <label class="block text-sm font-semibold text-slate-800">Keepa export
+              <span class="font-normal text-slate-400">(.xlsx / .csv)</span></label>
+            <input type="file" name="keepa_file" accept=".xlsx,.xls,.csv"
+                   class="mt-1 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700
+                          file:px-4 file:py-2 file:text-white hover:file:bg-slate-800">
+          </div>
           <button type="submit"
                   class="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700">
             Run Phase 3 →
           </button>
         </form>
         <p class="mt-2 text-xs text-slate-400">
-          This runs Amazon page-1 + Keepa + Claude + reviews — it can take a minute.
+          This runs Amazon page-1 + your Keepa export + Claude + reviews — it can take a minute.
         </p>
       </div>
     {% endif %}

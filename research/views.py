@@ -76,11 +76,15 @@ def select_asin(request, asin):
         else:
             xray_path = request.session.get(session_key)
 
+        # Optional Keepa export — only used for the not-in-DB fallback (no-API
+        # path); the normal DB flow ignores it.
+        keepa_path = _save_keepa_upload(request, asin, 'phase2')
+
         if not xray_path:
             ctx['error'] = 'Please upload your Helium 10 Xray keyword export to continue.'
         else:
             exclude = request.POST.getlist('exclude') or None
-            result = run_phase2(asin, xray_path, exclude=exclude)
+            result = run_phase2(asin, xray_path, exclude=exclude, keepa_file=keepa_path)
             ctx['result'] = result
             # Carry the main search term + accepted keywords to Phase 3 (the
             # JS-sheet thread can't cross requests, so we keep the term string).
@@ -91,6 +95,28 @@ def select_asin(request, asin):
                 }
 
     return render(request, 'research/select.html', ctx)
+
+
+def _save_keepa_upload(request, asin, slot):
+    """Persist an uploaded Keepa export (field name ``keepa_file``) under
+    ``media/<slot>_keepa/<asin>`` and remember it in the session so it survives
+    multi-step POSTs. Returns the path, or None if none is uploaded/stored. The
+    live Keepa API is used only when no file is present and USE_KEEPA_API is on."""
+    key = f'{slot}_keepa_{asin}'
+    up = request.FILES.get('keepa_file')
+    path = request.session.get(key)
+    if up:
+        kdir = Path(settings.MEDIA_ROOT) / f'{slot}_keepa'
+        kdir.mkdir(parents=True, exist_ok=True)
+        path = str(kdir / f'{asin}{Path(up.name).suffix or ".xlsx"}')
+        with open(path, 'wb') as fh:
+            for chunk in up.chunks():
+                fh.write(chunk)
+        request.session[key] = path
+    if not (path and Path(path).exists()):
+        path = None
+        request.session.pop(key, None)
+    return path
 
 
 def phase3(request, asin):
@@ -117,6 +143,15 @@ def phase3(request, asin):
             ctx['error'] = 'Upload at least one Helium 10 Xray Products export (one per launch keyword).'
             return render(request, 'research/phase3.html', ctx)
 
+        # Keepa competitor data comes from an uploaded Keepa export (no-API path);
+        # the live Keepa API is used only when USE_KEEPA_API is on.
+        keepa_path = _save_keepa_upload(request, asin, 'phase3')
+        if not keepa_path and not getattr(settings, 'USE_KEEPA_API', False):
+            ctx['error'] = ('Upload a Keepa export too — the competitor analysis needs Keepa data. '
+                            'See "How to get the Keepa file" below. (Developers can set '
+                            'USE_KEEPA_API=1 to use the live Keepa API instead.)')
+            return render(request, 'research/phase3.html', ctx)
+
         # Save the Xray Products uploads.
         xdir = Path(settings.MEDIA_ROOT) / 'phase3_xray' / asin
         xdir.mkdir(parents=True, exist_ok=True)
@@ -137,7 +172,7 @@ def phase3(request, asin):
             return render(request, 'research/phase3.html', ctx)
 
         result = run_phase3(asin, js_file=js_path, xray_files=saved,
-                            locked_keywords=sess.get('keywords'))
+                            locked_keywords=sess.get('keywords'), keepa_file=keepa_path)
         if js_note:
             result.setdefault('log', []).insert(0, js_note)
         ctx['result'] = result
@@ -250,23 +285,11 @@ def phase4(request, asin):
     # ── Keepa source: no-API path. The user uploads a Keepa website export; we
     # persist it (propose + build are two separate POSTs) and reuse it. The live
     # Keepa API is only used when settings.PHASE4_USE_KEEPA_API is on. ──────────
-    keepa_path = request.session.get(f'phase4_keepa_{asin}')
-    up_keepa = request.FILES.get('keepa_file')
-    if up_keepa:
-        kdir = Path(settings.MEDIA_ROOT) / 'phase4_keepa'
-        kdir.mkdir(parents=True, exist_ok=True)
-        keepa_path = str(kdir / f'{asin}{Path(up_keepa.name).suffix or ".xlsx"}')
-        with open(keepa_path, 'wb') as fh:
-            for chunk in up_keepa.chunks():
-                fh.write(chunk)
-        request.session[f'phase4_keepa_{asin}'] = keepa_path
-    if not (keepa_path and Path(keepa_path).exists()):
-        keepa_path = None
-        request.session.pop(f'phase4_keepa_{asin}', None)
-    if not keepa_path and not getattr(settings, 'PHASE4_USE_KEEPA_API', False):
+    keepa_path = _save_keepa_upload(request, asin, 'phase4')
+    if not keepa_path and not getattr(settings, 'USE_KEEPA_API', False):
         ctx['error'] = ('Upload a Keepa export first — the Critical Sheet needs Keepa product '
                         'data. See "How to get the Keepa file" below. (Developers can set '
-                        'PHASE4_USE_KEEPA_API=1 to use the live Keepa API instead.)')
+                        'USE_KEEPA_API=1 to use the live Keepa API instead.)')
         return render(request, 'research/phase4.html', ctx)
 
     # The JS sheet is the same one Phase 3 uses; regenerate it (cached → free),
