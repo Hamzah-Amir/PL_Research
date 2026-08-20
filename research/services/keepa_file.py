@@ -239,6 +239,22 @@ def _first_url(row, cols: _Cols) -> Optional[str]:
     return s.split(";")[0].split(",")[0].strip() or None
 
 
+def _images_count(row, cols: _Cols) -> Optional[int]:
+    """Real image count: a numeric 'Number of Images' column, else count of URLs
+    in the image field. None when neither is available (Rule 0)."""
+    c = cols.find(all_of=["image"], any_of=["count", "number"]) or cols.find(all_of=["images"], any_of=["count", "number"])
+    if c:
+        n = _num(row.get(c))
+        if n is not None:
+            return int(n)
+    c2 = cols.find(all_of=["image"], none_of=["count", "number", "url"]) or cols.find(all_of=["image"])
+    if c2:
+        urls = [u for u in re.split(r"[;,\s]+", str(row.get(c2) or "")) if u.startswith("http")]
+        if urls:
+            return len(urls)
+    return None
+
+
 def read_keepa_export(path: str) -> Dict[str, dict]:
     """Parse a Keepa CSV/XLSX export → ``{ASIN: normalised_record}``. Rows without
     a valid ASIN are dropped. Every record carries the parsed fields both Phase-4
@@ -287,6 +303,7 @@ def read_keepa_export(path: str) -> Dict[str, dict]:
             "description": _passthrough(row, desc_c),
             "bullets": _bullets(row, cols),
             "image_url": _first_url(row, cols),
+            "images_count": _images_count(row, cols),
             "color": _passthrough(row, color_c),
             "size": _passthrough(row, size_c),
             "category": _passthrough(row, cat_root) or _passthrough(row, cat_tree),
@@ -336,7 +353,8 @@ def keepa_file_fields(rec: dict, recs: Dict[str, dict]) -> dict:
         "bullets": list(rec.get("bullets") or []),
         "description": rec.get("description"),
         "image_urls": [rec["image_url"]] if rec.get("image_url") else [],
-        "images_count": 1 if rec.get("image_url") else 0,
+        "images_count": rec.get("images_count") if rec.get("images_count") is not None
+                        else (1 if rec.get("image_url") else 0),
         "variations_count": len(variation_attrs),
         "variation_attrs": variation_attrs,
         "fba_pick_pack_fee": rec.get("fba_pick_pack_fee"),

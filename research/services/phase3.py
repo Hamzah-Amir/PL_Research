@@ -2501,11 +2501,16 @@ def _fill_review_section(ws, start: int, end: int, review) -> None:
             m = re.match(r"^([123])\.", cell_e)
             if m:
                 idx = int(m.group(1)) - 1
+                # One single, middle-aligned cell per item: merge E:I across the row.
+                for mr in list(ws.merged_cells.ranges):
+                    if mr.min_row <= rr <= mr.max_row and mr.min_col <= 9 and mr.max_col >= 5:
+                        ws.unmerge_cells(str(mr))
                 cell = ws.cell(row=rr, column=5)
                 if idx < len(items):
                     cell.value = f"{idx + 1}. {items[idx]}"
                 elif not items and idx == 0 and note:
                     cell.value = f"1. {note}"
+                ws.merge_cells(start_row=rr, start_column=5, end_row=rr, end_column=9)
                 from openpyxl.styles import Alignment
                 cell.alignment = Alignment(horizontal="center", vertical="center",
                                            wrap_text=True)
@@ -2635,6 +2640,120 @@ def _rescale_band_labels(ws) -> None:
                 c.value = replace[c.value.strip()]
 
 
+# One-line "how it's scored" per rubric element, for the Instructions tab.
+_ELEMENT_HOWTO = {
+    "price": "Price positioning vs the other competitors — a competitively-priced listing scores higher (harder to beat).",
+    "sponsored_products": "How aggressively the listing runs Sponsored Product ads across the launch keywords.",
+    "sponsored_brands": "Presence of Sponsored Brand (headline) ad placements on the keywords.",
+    "reviews": "Number of product reviews — more reviews = stronger social proof = harder to beat.",
+    "rating": "Average star rating (higher rating scores higher).",
+    "age": "Age of the listing — long-established listings score higher.",
+    "product_images": "Main-gallery image quality & count: professional, lifestyle, infographics.",
+    "product_title": "Title quality — relevant, clear, well-structured (not keyword-stuffed).",
+    "bullets_description": "Bullet/description quality — benefits, keywords, addresses buyer pain points.",
+    "bestseller": "Best Seller badge / BSR strength (badge held longer = higher).",
+    "seller": "Amazon vs 3rd-party seller and seller feedback volume (established seller = higher).",
+    "unique_design": "Design uniqueness — visibly differentiated (2) vs generic/saturated (0). Patents ignored.",
+    "fba_fbm": "Fulfilment: FBA scores 2, FBM scores 0.",
+    "mkt_images": "Overall brand/marketing imagery quality from the gallery + any A+ visible.",
+    "mkt_title": "Marketing strength of the title (same listing, brand-marketing lens).",
+    "mkt_bullets": "Marketing strength of the description/bullets.",
+    "pricing_strategy": "Pricing strategy vs the market (positioning, discounts). -1/blank if not judgeable.",
+    "review_velocity": "Rate of new reviews per month — fast velocity = strong momentum.",
+    "variations": "Number of product variations offered (more variety = stronger).",
+    "sales_strength": "Monthly sales percentile within the category pool.",
+    "enhanced_content": "Enhanced media: A+ content and/or product video, else listing image count.",
+}
+
+
+def _write_instructions_sheet(wb) -> None:
+    """Insert a first 'Instructions' tab explaining how each competitor-analysis
+    element is scored and how the bands are read."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    if "Instructions" in wb.sheetnames:
+        del wb["Instructions"]
+    ws = wb.create_sheet("Instructions", 0)
+    ws.sheet_view.showGridLines = False
+    ws.column_dimensions["A"].width = 26
+    ws.column_dimensions["B"].width = 30
+    ws.column_dimensions["C"].width = 10
+    ws.column_dimensions["D"].width = 78
+
+    gold = PatternFill("solid", fgColor="F0B429")
+    head = PatternFill("solid", fgColor="12324C")
+    band_fill = PatternFill("solid", fgColor="F4F7F9")
+    thin = Side(style="thin", color="D8E1E8")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap = Alignment(vertical="center", wrap_text=True)
+
+    ws["A1"] = "Competitor Analysis — How Scoring Works"
+    ws["A1"].font = Font(bold=True, size=16, color="12324C")
+    ws.merge_cells("A1:D1")
+    ws["A2"] = ("Each competitor is scored on 21 elements grouped in 4 sections. Scores are rescaled to a "
+                "100-point total. A HIGHER score means a STRONGER competitor — i.e. HARDER for a new seller "
+                "to beat. Any value that cannot be verified from a source is left blank / marked "
+                "\"Unknown — need user confirmation\" (Rule 0: no guessing).")
+    ws["A2"].alignment = wrap
+    ws.merge_cells("A2:D2")
+    ws.row_dimensions[2].height = 46
+
+    # Header row
+    r = 4
+    for col, title in zip("ABCD", ["Section", "Element", "Max pts", "How it is scored"]):
+        c = ws[f"{col}{r}"]
+        c.value = title
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = head
+        c.border = border
+        c.alignment = Alignment(vertical="center")
+    r += 1
+    last_section = None
+    for key, label, mx, section in ELEMENTS:
+        ws[f"A{r}"] = section if section != last_section else ""
+        if section != last_section:
+            ws[f"A{r}"].font = Font(bold=True, color="8A5B00")
+        last_section = section
+        ws[f"B{r}"] = label
+        ws[f"C{r}"] = mx
+        ws[f"D{r}"] = _ELEMENT_HOWTO.get(key, "")
+        for col in "ABCD":
+            cell = ws[f"{col}{r}"]
+            cell.border = border
+            cell.alignment = wrap if col == "D" else Alignment(vertical="center", wrap_text=True)
+        r += 1
+
+    ws[f"A{r}"] = "Raw max = 184 pts, rescaled proportionally to a 100-pt total (col K in each block)."
+    ws.merge_cells(f"A{r}:D{r}")
+    ws[f"A{r}"].font = Font(italic=True, size=9, color="5C7284")
+    r += 2
+
+    # Bands legend
+    ws[f"A{r}"] = "Score bands (total /100)"
+    ws[f"A{r}"].font = Font(bold=True, size=12, color="12324C")
+    ws.merge_cells(f"A{r}:D{r}")
+    r += 1
+    for lo, hi, desc in BANDS:
+        ws[f"A{r}"] = f"{lo}–{hi}"
+        ws[f"A{r}"].font = Font(bold=True)
+        ws[f"B{r}"] = desc
+        ws.merge_cells(f"B{r}:D{r}")
+        for col in "ABCD":
+            ws[f"{col}{r}"].fill = band_fill
+            ws[f"{col}{r}"].border = border
+            ws[f"{col}{r}"].alignment = wrap
+        r += 1
+
+    # Weakness/strength note
+    r += 1
+    ws[f"A{r}"] = ("Weaknesses / Solutions / Strengths are derived from the competitor's customer reviews "
+                   "(1–2★ complaints and 4–5★ praise). With no review data they show "
+                   "\"Unknown — need user confirmation\".")
+    ws.merge_cells(f"A{r}:D{r}")
+    ws[f"A{r}"].alignment = wrap
+    ws.row_dimensions[r].height = 32
+
+
 def write_competitor_workbook(
     template_path: str,
     top: List[Dict],
@@ -2668,6 +2787,7 @@ def write_competitor_workbook(
     _fill_pricing_analysis(wb, top, target_title)
     _fill_sponsored_products(wb, keywords)
     _rescale_band_labels(ws)
+    _write_instructions_sheet(wb)  # first tab: how scoring works
 
     out_dir = Path("output")
     out_dir.mkdir(exist_ok=True)

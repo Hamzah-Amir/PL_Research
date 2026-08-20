@@ -152,12 +152,19 @@ def phase3(request, asin):
                             'USE_KEEPA_API=1 to use the live Keepa API instead.)')
             return render(request, 'research/phase3.html', ctx)
 
-        # Save the Xray Products uploads.
+        # Save the Xray Products uploads. Clear stale files first (old runs mix
+        # in), and prefix each with its UPLOAD INDEX so downstream (Phase 5 H10)
+        # reads them in the order you uploaded — i.e. file #1 → KW1, #2 → KW2, …
+        # (browser download names like "Xray (7)" carry no keyword, so order is
+        # the only signal). Upload your keyword exports in your keyword order.
         xdir = Path(settings.MEDIA_ROOT) / 'phase3_xray' / asin
         xdir.mkdir(parents=True, exist_ok=True)
+        for old in xdir.glob('*'):
+            if old.is_file():
+                old.unlink()
         saved = []
-        for f in uploads:
-            dest = xdir / f.name
+        for i, f in enumerate(uploads):
+            dest = xdir / f'{i:02d}_{f.name}'
             with open(dest, 'wb') as fh:
                 for chunk in f.chunks():
                     fh.write(chunk)
@@ -273,10 +280,15 @@ def phase4(request, asin):
                     fh.write(chunk)
             log = []
             try:
-                add_kws_to_workbook(wb, str(cpath), asin, sess.get('keywords'), log=log)
-                ctx['result'] = {'stage': 'cerebro', 'workbook_path': wb, 'log': log,
+                # Fill a DISTINCT copy ("…_withKWs.xlsx"), never the original build,
+                # so a stale pre-Cerebro download can't be mistaken for the final file.
+                import shutil
+                kws_wb = str(Path(wb).with_name(Path(wb).stem.replace('_withKWs', '') + '_withKWs.xlsx'))
+                shutil.copyfile(wb, kws_wb)
+                add_kws_to_workbook(kws_wb, str(cpath), asin, sess.get('keywords'), log=log)
+                ctx['result'] = {'stage': 'cerebro', 'workbook_path': kws_wb, 'log': log,
                                  'top10_asins': request.session.get(f'phase4_top10_{asin}', [])}
-                ctx['workbook_name'] = Path(wb).name
+                ctx['workbook_name'] = Path(kws_wb).name
                 ctx['cerebro_done'] = True
             except Exception as e:  # noqa: BLE001
                 ctx['error'] = f'Could not fill the KWs tabs from the Cerebro export: {e}'

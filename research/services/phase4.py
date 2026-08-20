@@ -827,16 +827,21 @@ _H10_SECTIONS = [
 ]
 
 
-def _h10_cells(xray_by_kw: dict) -> Dict[str, object]:
+def _h10_cells(xray_by_kw: dict, launch_keywords=None) -> Dict[str, object]:
     """Build the H10 Basic Data cell writes from up to 3 keywords' Xray exports:
     date + keyword + Amazon URL per section, then the top-57 products (by sales)
-    filling the pre-styled data rows."""
+    filling the pre-styled data rows. Section labels/URLs use the Phase-2 launch
+    keywords (top 3) when provided — NOT the uploaded file names; the Xray files
+    supply only the product rows, taken in upload order."""
     import pandas as pd
     from urllib.parse import quote_plus
 
+    kws = [str(k).strip() for k in (launch_keywords or []) if str(k).strip()][:3]
     cells: Dict[str, object] = {}
     today = date.today().strftime("%Y-%m-%d")
-    for (kw, df), (dcell, kcell, ucell, r0, r1) in zip(list(xray_by_kw.items())[:3], _H10_SECTIONS):
+    for i, ((fk, df), (dcell, kcell, ucell, r0, r1)) in enumerate(
+            zip(list(xray_by_kw.items())[:3], _H10_SECTIONS)):
+        kw = kws[i] if i < len(kws) else fk  # Phase-2 keyword, else the file key
         cells[dcell] = today
         cells[kcell] = kw
         cells[ucell] = "https://www.amazon.co.uk/s?k=" + quote_plus(str(kw))
@@ -1180,7 +1185,7 @@ def write_critical_sheet(rows: List[dict], legend: List[dict], *, target_asin: s
     # 'H10 basic data' — date/keyword/URL + top-57 products per keyword section.
     new_h10_xml = None
     if h10_xml is not None:
-        new_h10_xml = _fill_sheet_xml(h10_xml, _h10_cells(xray_by_kw), set())
+        new_h10_xml = _fill_sheet_xml(h10_xml, _h10_cells(xray_by_kw, launch_keywords), set())
 
     # KWs Complete / Filtered Data — from the multi-ASIN Cerebro export (Phase 6).
     new_kc_xml = new_kf_xml = new_ke_xml = None
