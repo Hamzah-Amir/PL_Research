@@ -44,24 +44,11 @@
           Claude builds a product profile and picks the best launch keywords.
         </p>
         <form action="{% url 'research:select' asin=asin %}" method="post" enctype="multipart/form-data"
-              class="mt-4 space-y-3">
+              class="mt-4 flex flex-wrap items-center gap-3">
           {% csrf_token %}
-          <div>
-            <label class="block text-sm font-semibold text-slate-800">Xray keyword export
-              <span class="font-normal text-slate-400">(.xlsx / .csv)</span></label>
-            <input type="file" name="xray_file" accept=".xlsx,.xls,.csv" required
-                   class="mt-1 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600
-                          file:px-4 file:py-2 file:text-white hover:file:bg-indigo-700">
-          </div>
-          {% if not product %}
-            <div>
-              <label class="block text-sm font-semibold text-slate-800">Keepa export
-                <span class="font-normal text-slate-400">(optional — for this ASIN’s details, since it isn’t in the database)</span></label>
-              <input type="file" name="keepa_file" accept=".xlsx,.xls,.csv"
-                     class="mt-1 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-700
-                            file:px-4 file:py-2 file:text-white hover:file:bg-slate-800">
-            </div>
-          {% endif %}
+          <input type="file" name="xray_file" accept=".xlsx,.xls,.csv" required
+                 class="text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600
+                        file:px-4 file:py-2 file:text-white hover:file:bg-indigo-700">
           <button type="submit"
                   class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700">
             Run Phase 2 →

@@ -423,8 +423,7 @@ def _df_records(df: pd.DataFrame) -> List[Dict]:
 
 # ── High-level entry point ───────────────────────────────────────────────────
 def run_phase2(asin: str, xray_file, *, target_count: int = TARGET_KEYWORD_COUNT,
-               exclude: Optional[List[str]] = None, autostart_phase3: bool = True,
-               keepa_file=None) -> Dict:
+               exclude: Optional[List[str]] = None, autostart_phase3: bool = True) -> Dict:
     """Run Phase 2 end-to-end for one selected ASIN and return data for the
     frontend. The target's title/category come from the Product ORM; keyword
     candidates from the uploaded Xray file. Re-call with `exclude` to swap out
@@ -447,37 +446,19 @@ def run_phase2(asin: str, xray_file, *, target_count: int = TARGET_KEYWORD_COUNT
         subcategory = product.subcategory or ""
         source = "db"
     else:
-        # Prefer an uploaded Keepa export (no-API path); else fall back to the
-        # live Keepa API. Either way this branch only runs for a not-in-DB ASIN.
-        kf = None
-        if keepa_file:
-            try:
-                from research.services.keepa_file import read_keepa_export, keepa_file_fields
-                rec = read_keepa_export(keepa_file).get(asin)
-                if rec:
-                    kf = keepa_file_fields(rec, {asin: rec})
-            except Exception as e:  # noqa: BLE001
-                out["error"] = (f"ASIN {asin} is not in the product database, and the "
-                                f"uploaded Keepa file could not be read: {e}")
-                return out
-            if kf is None:
-                out["error"] = (f"ASIN {asin} is not in the product database and is not "
-                                f"in the uploaded Keepa file.")
-                return out
-        else:
-            try:
-                from research.services.phase3 import (
-                    load_keepa, query_products, extract_keepa_fields)
-                kp = query_products(load_keepa(), [asin], deep=False).get(asin)
-            except Exception as e:  # noqa: BLE001
-                out["error"] = (f"ASIN {asin} is not in the product database, and the "
-                                f"Keepa fallback failed: {e}")
-                return out
-            if not kp:
-                out["error"] = (f"ASIN {asin} is not in the product database, and Keepa "
-                                f"returned no product for it.")
-                return out
-            kf = extract_keepa_fields(kp)
+        try:
+            from research.services.phase3 import (
+                load_keepa, query_products, extract_keepa_fields)
+            kp = query_products(load_keepa(), [asin], deep=False).get(asin)
+        except Exception as e:  # noqa: BLE001
+            out["error"] = (f"ASIN {asin} is not in the product database, and the "
+                            f"Keepa fallback failed: {e}")
+            return out
+        if not kp:
+            out["error"] = (f"ASIN {asin} is not in the product database, and Keepa "
+                            f"returned no product for it.")
+            return out
+        kf = extract_keepa_fields(kp)
         title = kf.get("title") or ""
         category = kf.get("category") or ""
         subcategory = kf.get("subcategory") or ""
