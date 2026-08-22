@@ -8,7 +8,7 @@ env/
 
 # ── Generated output & local data ─────────────────────────────
 output/
-test_file/
+test_files/
 media/
 staticfiles/
 
